@@ -4,16 +4,37 @@
   "description": "Hosts-native grouped hostname and target manager",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=24" },
-  "bin": { "hostman": "dist/cli/index.js" },
-  "files": ["dist", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "hostman": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc && node scripts/copy-helpers.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "npm run lint -- --fix",
     "test": "npm run build && node --test test/*.test.mjs",
     "prepack": "npm run build",
     "smoke:package": "node scripts/package-smoke.mjs",
     "smoke:elevation": "npm run build && node scripts/elevation-smoke.mjs"
   },
-  "dependencies": { "@inquirer/prompts": "^8.0.0", "commander": "^14.0.0" },
-  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0" }
+  "dependencies": {
+    "@inquirer/prompts": "^8.0.0",
+    "commander": "^14.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.71.0"
+  }
 }

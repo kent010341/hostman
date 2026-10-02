@@ -180,6 +180,21 @@ Use `hostman repair foo.test` for effective-IP conflicts. `--strategy restore` r
 
 ## Write guarantees and tests
 
+Code quality uses ESLint with type-aware TypeScript checks. JavaScript and TypeScript use four-space indentation,
+a strict 120-character line limit, and multiline braced control-flow blocks. Explicit `any` and unsafe uses of
+values inferred as `any` are errors; TypeScript's `strict` compiler setting also rejects implicit `any` parameters.
+Generated output and dependencies are excluded. CI runs lint before tests.
+
+```sh
+npm run lint
+npm run lint:fix
+# Equivalent automatic fixes:
+npm run lint -- --fix
+```
+
+ESLint fixes indentation and braces automatically. Long strings/expressions and unsafe type boundaries may
+require manual changes. Use `unknown` and validate external data rather than bypassing rules with `any`.
+
 Writes use same-directory temporary files, flushing, validation, a source digest check, and replacement. Unix mode/ownership and Windows attributes/ACLs are retained. Symlink destinations resolve before writing. BOM and existing line endings are preserved. Appending to a file without a final newline inserts a separator.
 
 A sibling `.hostman.lock` serializes hostman writers. Remove a stale lock only after checking that no writer is running. Abrupt process or machine crashes may leave locks or temporary files.
