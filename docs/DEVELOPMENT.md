@@ -1,0 +1,76 @@
+# Development
+
+Install dependencies and build the TypeScript CLI:
+
+```sh
+npm ci
+npm run build
+npm link
+```
+
+Rebuild after editing TypeScript when using a linked installation. Installation permissions depend on your
+npm global prefix and are separate from permission to edit system hosts.
+
+## Code quality and tests
+
+```sh
+npm run lint
+npm run lint:fix
+npm test
+npm run smoke:package
+```
+
+`npm run lint -- --fix` is equivalent to `lint:fix`. ESLint enforces four-space indentation, a strict
+120-character line limit, and multiline braced control flow. Type-aware rules prohibit explicit `any` and
+unsafe uses of values inferred as `any`. TypeScript's `strict` setting rejects implicit `any` parameters.
+Generated output and dependencies are excluded. Long expressions and external-data boundaries may need
+manual fixes after automatic formatting; use `unknown` and validate external data.
+
+Tests use temporary fixtures, never the machine's real hosts file. They cover parser stability, conflicts,
+migration, CLI help/lifecycle, transaction failures, request tampering, and injected elevation. Windows tests
+perform real file replacement and ACL checks. Unix tests cover mode/ownership and symlinks. CI runs lint,
+tests, and package smoke checks on Windows, Ubuntu, and macOS.
+
+On Windows, `npm run smoke:elevation` protects a disposable directory and requests actual UAC elevation.
+Accept the dialog to verify the privileged helper. The script restores permissions and removes the fixture.
+Run it from an unelevated terminal. Actual Unix `sudo` authentication requires a separate manual check.
+
+## Build a distributable package
+
+```sh
+npm pack
+npm install --global ./hostman-1.0.0.tgz
+hostman --help
+```
+
+The tarball includes compiled code, helpers, and documentation. Its destination machine also needs Node.js 24
+or newer. `smoke:package` tests packed and linked installations in temporary npm prefixes, including their
+command shims and a write to a temporary hosts fixture.
+
+## Storage and transaction design
+
+The selected hosts file is the sole source of truth. All managed state is reconstructable without a database
+or project metadata. A group's semantic SHA-256 digest identifies valid manual changes; it is not a cache.
+
+Writes prepare and flush a same-directory temporary file, validate the result, recheck the source digest,
+and replace the destination. Unix mode/ownership and Windows attributes/ACLs are retained. Symlink destinations
+resolve before writing. BOM and existing line endings are preserved. Appending to a file without a final
+newline inserts a separator. Untouched managed blocks and unrelated unmanaged lines are preserved.
+
+A sibling `.hostman.lock` serializes hostman writers. Abrupt crashes may leave locks or temporary files.
+Remove a stale lock only after checking that no writer is running.
+
+External editors do not honor this lock. The final digest check detects observed changes before replacement
+but does not provide atomic compare-and-swap against arbitrary editors. Avoid simultaneous editing.
+Mounted or restricted filesystems may reject replacement; no in-place truncation fallback is used.
+
+## Privileged helper
+
+Selections complete in the original process. Only the commit helper is elevated, using Windows UAC or Unix
+`sudo`. Its versioned request includes the resolved path, source digest, fully specified operation, and result
+digest. The helper validates the request hash, rereads the source, reapplies the domain operation, and verifies
+the expected output before committing. A change while authentication is pending cancels the commit.
+
+The original process checks the structured response and resulting file before reporting success. Request
+and result files are removed afterward. Cancellation, denied authentication, and missing tools stop the
+operation without retrying elevation indefinitely. Credentials are never stored.
