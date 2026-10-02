@@ -1,211 +1,175 @@
 # hostman
 
-Hostman manages grouped hostnames and switches them between named targets. The selected hosts file is the sole source of truth: reinstalling hostman requires no database or project metadata.
+Manage project hostnames together and switch them between local, lab, or production IPs.
+For example, switch both `foo.test` and `api.foo.test` to another environment with one command.
 
-## Build and install
+## Install
 
-Requirements: Node.js 24 or newer and npm. Windows, Linux, and macOS are supported. Windows writes and UAC elevation use built-in Windows PowerShell 5.1; Unix elevation uses `/usr/bin/sudo`.
+You need **Node.js 24 or newer** and npm. Hostman runs on Windows, Linux, and macOS.
 
-From a source checkout (these npm commands also work in PowerShell):
+Build and install from source. These commands work in PowerShell and Unix shells:
 
 ```sh
 git clone https://github.com/kent010341/hostman.git
 cd hostman
 npm ci
 npm run build
-npm test
 npm link
 hostman --help
 ```
 
-`npm link` points the command to this checkout; rebuild after editing TypeScript. Installation permissions depend on your npm global prefix. Installing hostman and editing system hosts are separate operations.
-
-For an independent installation:
+Keep the checkout while using this linked installation. To install from a supplied package instead:
 
 ```sh
-npm pack
 npm install --global ./hostman-1.0.0.tgz
 hostman --help
 ```
 
-The package includes the compiled CLI, domain engine, and privilege helpers. The destination machine also needs Node.js. Remove either installation with `npm uninstall --global hostman`. `npm run smoke:package` checks linked and packed installation in isolated temporary prefixes.
+To uninstall, run `npm uninstall --global hostman`.
 
-## Select a hosts file
+## Get started
 
-| Platform | Default |
-| --- | --- |
-| Windows | `$env:SystemRoot\System32\drivers\etc\hosts` |
-| Linux/macOS | `/etc/hosts` |
+### Already have custom hosts rules?
 
-Every command accepts `--hosts-file <path>`. Relative paths resolve against the original working directory. If Windows `SystemRoot` is missing, specify the source explicitly. The file must already exist and use ASCII or UTF-8, optionally with a BOM. UTF-16 is rejected.
-
-Try a disposable file first. PowerShell:
-
-```powershell
-Set-Content -LiteralPath '.\sample hosts' -Value '10.20.0.10 api.foo.test' -Encoding utf8
-hostman --hosts-file '.\sample hosts' migrate --dry-run
-hostman --hosts-file '.\sample hosts' migrate --group foo.test
-hostman --hosts-file '.\sample hosts' show all
-```
-
-Unix:
-
-```sh
-printf '10.20.0.10 api.foo.test\n' > './sample hosts'
-hostman --hosts-file './sample hosts' migrate --dry-run
-hostman --hosts-file './sample hosts' migrate --group foo.test
-hostman --hosts-file './sample hosts' show all
-```
-
-## Permissions and elevation
-
-Reading, help, dry runs, and no-op operations never request elevation. Writable custom files work without administrator privileges.
-
-Hostman first attempts a normal transactional write. If permissions deny it in an interactive terminal (stdin and stdout are both terminals), it explains the requirement and elevates only the commit helper:
-
-- Windows displays the operating system's UAC dialog.
-- Linux/macOS runs the helper through `sudo`, which may request your password.
-
-Selections finish before elevation. The helper receives the resolved source path and approved operation. It verifies the request hash, original source hash, domain validation, and expected result hash. A source change while authentication is pending cancels the commit.
-
-Cancelling or denying elevation leaves hosts unchanged. No credentials are stored, and elevation is not retried indefinitely. `--no-elevate` disables automatic elevation. Non-interactive processes never launch UAC or `sudo`; run them with sufficient privileges.
-
-On Windows, open PowerShell using **Run as administrator**. If the npm command is unavailable under that account, invoke the installed entry with actual absolute paths:
-
-```powershell
-& 'C:\Program Files\nodejs\node.exe' 'C:\path\to\hostman\dist\cli\index.js' --hosts-file 'C:\Windows\System32\drivers\etc\hosts' migrate --all
-```
-
-On Unix, use actual absolute Node and entry paths, avoiding root's npm prefix:
-
-```sh
-sudo /absolute/path/to/node /absolute/path/to/hostman/dist/cli/index.js --hosts-file /etc/hosts migrate --all
-```
-
-An elevated process reports remaining permission errors without another elevation attempt. Read-only attributes, execution policy, and filesystem restrictions may still prevent writes. Hostman does not bypass system policy or truncate the live file as a fallback.
-
-## Initialization and migration
-
-`hostman init` appends an empty managed section when absent. Repeated runs preserve existing state without writing. It does not import rules or create a global `local` target. Conflicting managed documents must be repaired first.
-
-`hostman migrate` scans current unmanaged effective rules every time. Without selection flags it previews candidates, collects selections, and confirms the move. Explicit selections work in scripts:
+Preview what hostman can import, then select the groups you want to manage:
 
 ```sh
 hostman migrate --dry-run
-hostman migrate --group foo.test --group bar.test
-hostman migrate --all
+hostman migrate
+hostman show all
 ```
 
-`--group` and `--all` are mutually exclusive. Dry runs never prompt or write. A missing managed section is created only as part of an actual import. No eligible rules means no changes.
+You do not need to run `init` first. A hostname such as `api.foo.test` becomes part of the `foo.test` group.
+Imported groups start with a target named `imported`, using their existing IP.
 
-Grouping uses the final two labels: `api.foo.test` belongs to `foo.test`. Public Suffix List handling is outside v1; `example.co.uk` groups under `co.uk`.
+Run `hostman migrate` again whenever you add more rules manually. Groups with conflicting or mixed IPs are
+skipped with an explanation; fix those rules before trying again.
 
-| Candidate | Result |
-| --- | --- |
-| New group, one IP | Enabled group with active group-owned target `imported` |
-| Existing enabled group, matching active IP | Add hostnames; retain targets |
-| Multiple IPs or mismatched active IP | Skip the whole candidate group |
-| Disabled/conflicted group | Skip |
-| Duplicate hostname or existing ownership | Skip |
+### Starting a new project?
 
-Skip reasons appear in the preview. Comments, disabled rules, single-label names, IP-like names, and standard localhost aliases stay unmanaged. IPv6 comparison is semantic.
-
-Selected hostname tokens move into management in one transaction. Unselected aliases retain their IP and comments. When all aliases on a line are imported, the inline comment remains separately. Unrelated lines remain byte-for-byte unchanged.
-
-Rerun migration after manually adding eligible rules outside the markers. An unchanged file produces no diff. Migration never invents environment names, switches targets, or changes existing target IPs.
-
-## Commands
-
-Every command and nested command supports `-h` and `--help`, even with an inaccessible source. Running `hostman` in a terminal opens a menu; without a terminal it shows help. Missing command inputs prompt in a terminal and fail clearly in scripts.
-
-```text
-hostman init
-hostman migrate [--group <group> ... | --all] [--dry-run]
-hostman show [active | all | <group>]
-hostman add group [group] --target <name=value> ... [--active <name>] [--host <host> ...] [--disabled]
-hostman remove group [group]
-hostman add host [group] [hostname]
-hostman remove host [group] [hostname]
-hostman enable [group]
-hostman disable [group]
-hostman use [group] [target]
-hostman target add [group] [target] [IP-or-@global]
-hostman target set [group] [target] [IP-or-@global]
-hostman target remove [group] [target]
-hostman global add [target] [IP]
-hostman global set [target] [IP]
-hostman global remove [target]
-hostman repair [group] [--strategy restore|keep]
-```
-
-`show` defaults to enabled groups; `show all` includes disabled groups. Details include targets, hosts, effective IP, status, and conflicts. Valid groups remain inspectable when another is broken.
-
-Example lifecycle:
+Create a group with local and lab targets:
 
 ```sh
 hostman init
-hostman global add local 127.0.0.1
-hostman add group foo.test --target local=@local --target prod=10.20.0.10 --active local --host @ --host api
-hostman target add foo.test lab 10.30.0.10
+hostman add group foo.test --target local=127.0.0.1 --target lab=10.20.0.10 --host @ --host api
+hostman show foo.test
 hostman use foo.test lab
-hostman add host foo.test admin
-hostman disable foo.test
-hostman enable foo.test
+```
+
+This creates `foo.test` and `api.foo.test`. The first target, `local`, is initially active.
+The final command switches both names to the lab IP. Replace the example domain and IPs with your own.
+
+For a guided menu, run `hostman` without a command. Commands also prompt for missing inputs in a terminal.
+
+**Permissions:** when writing system hosts, an interactive terminal may show Windows UAC or request your
+`sudo` password. Approve it to save the changes; cancelling leaves the file unchanged.
+
+## Common tasks
+
+The examples below assume that `foo.test` is already managed.
+
+### See what is active
+
+```sh
+hostman show
+hostman show all
 hostman show foo.test
 ```
 
-Target names are arbitrary; `local` has no special runtime meaning. `@local` explicitly references a global. Changing a global IP regenerates enabled groups actively using it. Removing a referenced global or an active group target is rejected.
+Use `show` for enabled groups, `show all` to include disabled groups, and `show <group>` for its hosts and targets.
 
-Host inputs accept `@` for the root, a short subdomain such as `api`, or a full hostname belonging to the group. Each host belongs to exactly one group and cannot also appear in unmanaged effective rules. Disabled groups retain definitions but emit no effective rules.
-
-## File format and manual edits
-
-One pair of outer markers contains global definitions and group blocks. Targets and disabled hosts are stored in comments; enabled hosts use normal rules. Group markers include an eight-character semantic SHA-256 digest.
-
-```text
-# >>> hostman v1
-# global local=127.0.0.1
-# >>> group foo.test enabled=true active=local hash=<digest>
-# target local=@local
-127.0.0.1 api.foo.test
-# <<< group foo.test
-# <<< hostman
-```
-
-`<digest>` is illustrative; the serializer supplies the value. A mismatched digest alone means DIRTY. A valid manually added host matching the active IP survives the next mutation of its group. Untouched blocks remain unchanged.
-
-Conflicts include mixed effective IPs, missing references, duplicate ownership, malformed markers, and invalid hosts. Mutations reject affected conflicts; structural document conflicts block all writes.
-
-Use `hostman repair foo.test` for effective-IP conflicts. `--strategy restore` regenerates from the configured target. `--strategy keep` updates a group-owned active target to one unambiguous effective IP. Shared globals require explicit repair; `keep` never silently changes other groups. Structural conflicts require manual correction. Repair never invents target names.
-
-## Write guarantees and tests
-
-Code quality uses ESLint with type-aware TypeScript checks. JavaScript and TypeScript use four-space indentation,
-a strict 120-character line limit, and multiline braced control-flow blocks. Explicit `any` and unsafe uses of
-values inferred as `any` are errors; TypeScript's `strict` compiler setting also rejects implicit `any` parameters.
-Generated output and dependencies are excluded. CI runs lint before tests.
+### Add an environment and switch to it
 
 ```sh
-npm run lint
-npm run lint:fix
-# Equivalent automatic fixes:
-npm run lint -- --fix
+hostman target add foo.test prod 10.30.0.10
+hostman use foo.test prod
+hostman target set foo.test prod 10.30.0.20
 ```
 
-ESLint fixes indentation and braces automatically. Long strings/expressions and unsafe type boundaries may
-require manual changes. Use `unknown` and validate external data rather than bypassing rules with `any`.
+`target add` defines a destination; `use` selects it. `target set` changes an existing destination's IP.
+If that target is active, all enabled hosts in the group update immediately.
 
-Writes use same-directory temporary files, flushing, validation, a source digest check, and replacement. Unix mode/ownership and Windows attributes/ACLs are retained. Symlink destinations resolve before writing. BOM and existing line endings are preserved. Appending to a file without a final newline inserts a separator.
-
-A sibling `.hostman.lock` serializes hostman writers. Remove a stale lock only after checking that no writer is running. Abrupt process or machine crashes may leave locks or temporary files.
-
-External editors do not honor the lock. The final digest check detects observed changes before replacement, but does not provide atomic compare-and-swap against arbitrary editors. Avoid simultaneous editing. Mounted or restricted filesystems may reject atomic replacement; no in-place fallback is used.
+To add a local destination to an imported group:
 
 ```sh
-npm test
-npm run smoke:package
+hostman target add foo.test local 127.0.0.1
+hostman use foo.test local
 ```
 
-Tests use temporary fixtures, never real system hosts. They cover parser stability, domain conflicts, migration, CLI help/lifecycle, transaction failures, request tampering, and injected elevation. Windows tests perform actual replacement and ACL checks; Unix tests cover mode/ownership and symlinks. Real UAC and `sudo` require separate manual checks. CI is configured for Windows, Ubuntu, and macOS.
+### Add or remove a hostname
 
-On Windows, `npm run smoke:elevation` temporarily protects a disposable directory and requests real UAC elevation. Accept the dialog to verify the privileged helper; the script restores permissions and removes the fixture afterward. Run it from a normal, unelevated terminal.
+```sh
+hostman add host foo.test admin
+hostman remove host foo.test admin
+```
+
+Use `@` for `foo.test`, `api` for `api.foo.test`, or a full name such as `admin.foo.test`.
+
+### Temporarily turn a project off
+
+```sh
+hostman disable foo.test
+hostman enable foo.test
+```
+
+Disabling removes the group's effective mappings while keeping its hosts and targets for later use.
+
+### Share one target across projects
+
+```sh
+hostman global add local 127.0.0.1
+hostman target add foo.test shared-local @local
+hostman use foo.test shared-local
+hostman global set local 192.168.50.21
+```
+
+Other groups can reference the same `@local` target. Changing its global IP updates every enabled group using it.
+
+### Remove a target or project
+
+```sh
+hostman use foo.test local
+hostman target remove foo.test prod
+hostman remove group foo.test
+```
+
+Switch away from a target before removing it. Removing a group deletes its managed hosts and target definitions.
+Remove a global with `hostman global remove <name>` after removing every group target that references it.
+
+### Resolve changes made by hand
+
+```sh
+hostman show foo.test
+hostman repair foo.test
+```
+
+Use `migrate` for rules added **outside** hostman's markers. Use `repair` when changes **inside** a managed group
+conflict with its target. Repair offers available resolutions; malformed markers may require manual correction.
+
+## Help and another hosts file
+
+Every command has help, including nested commands:
+
+```sh
+hostman --help
+hostman migrate --help
+hostman target set --help
+```
+
+Hostman uses the system hosts file by default: `$env:SystemRoot\System32\drivers\etc\hosts` on Windows,
+or `/etc/hosts` on Linux/macOS. To work with an existing custom file, put its path before the command:
+
+```sh
+hostman --hosts-file "./sample hosts" migrate --dry-run
+hostman --hosts-file "./sample hosts" show all
+```
+
+For scripts, supply complete arguments and use `migrate --group foo.test` or `migrate --all` for explicit imports.
+Scripts must already have write permission; automatic elevation only runs in an interactive terminal.
+`--no-elevate` disables it there too.
+
+## Further reading
+
+- [Advanced usage and troubleshooting](docs/REFERENCE.md): migration eligibility, manual edits, permissions,
+  and the hosts file format.
+- [Development](docs/DEVELOPMENT.md): linting, tests, package builds, and write guarantees.
