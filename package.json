@@ -1,0 +1,19 @@
+{
+  "name": "hostman",
+  "version": "1.0.0",
+  "description": "Hosts-native grouped hostname and target manager",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "bin": { "hostman": "dist/cli/index.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc && node scripts/copy-helpers.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build",
+    "smoke:package": "node scripts/package-smoke.mjs",
+    "smoke:elevation": "npm run build && node scripts/elevation-smoke.mjs"
+  },
+  "dependencies": { "@inquirer/prompts": "^8.0.0", "commander": "^14.0.0" },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0" }
+}
