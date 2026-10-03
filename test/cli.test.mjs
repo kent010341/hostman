@@ -6,7 +6,9 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parse } from '../dist/hosts/document.js';
+import { quoteArgument } from '../dist/cli/hints.js';
 const entry = resolve('dist/cli/index.js');
 function cli(args, env = process.env) {
     return spawnSync(process.execPath,
@@ -57,6 +59,10 @@ for (const command of [
                 /Example/);
             assert.match(result.stdout,
                 /--hosts-file/);
+            assert.match(result.stdout, /--no-hints/);
+            if (command) {
+                assert.match(result.stdout, /Related commands:/);
+            }
             assert.equal(result.stderr,
                 '');
         });
@@ -97,11 +103,7 @@ test('complete CLI lifecycle, dry-run, and repeated migration',
         const repeatedInit = run('init');
         assert.match(repeatedInit, /Hostman is already initialized\./);
         for (const output of [initialized, repeatedInit]) {
-            assert.match(output, /Next steps:/);
-            assert.match(output, /hostman migrate --dry-run\n\s+hostman migrate/);
-            assert.match(output, /hostman add group example\.com --target local=127\.0\.0\.1 --host @/);
-            assert.match(output, /Open the guided menu:\n\s+hostman\n/);
-            assert.match(output, /include --hosts-file with the same path/);
+            assert.doesNotMatch(output, /Next steps:/);
         }
         run('migrate',
             '--all');
@@ -242,6 +244,53 @@ test('default group root rejects an unmanaged duplicate without writing', async 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /my\.dev also exists outside hostman/);
     assert.equal(await readFile(path, 'utf8'), before);
+});
+
+test('interactive hints retain custom paths, follow state, and respect --no-hints', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'hostman-hints-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const path = join(dir, "user's $sample hosts");
+    const preload = join(dir, 'tty.mjs');
+    await writeFile(path, '127.0.0.1 localhost\n');
+    await writeFile(preload,
+        "Object.defineProperty(process.stdin, 'isTTY', { value: true });\n"
+        + "Object.defineProperty(process.stdout, 'isTTY', { value: true });\n");
+    const run = (...args) => spawnSync(process.execPath,
+        ['--import', pathToFileURL(preload).href, entry, '--hosts-file', path, ...args], { encoding: 'utf8' });
+    const check = (...args) => {
+        const result = run(...args);
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout;
+    };
+    const prefix = `hostman --hosts-file ${quoteArgument(path)}`;
+    const initialized = check('init');
+    assert.ok(initialized.indexOf('Hostman initialized.') < initialized.indexOf('Next steps:'));
+    assert.ok(initialized.includes(`${prefix} add group example.com --target local=127.0.0.1 --host '@'`));
+    const before = await readFile(path, 'utf8');
+    assert.match(check('init'), /already initialized/);
+    assert.equal(await readFile(path, 'utf8'), before);
+    assert.doesNotMatch(check('--no-hints', 'init'), /Next steps:/);
+    const created = check('add', 'group', 'team.test', '--target', 'me=127.0.0.1', '--host', '@');
+    assert.ok(created.includes(`${prefix} add host team.test api`));
+    assert.ok(created.includes(`${prefix} target add team.test lab 192.0.2.10`));
+    const target = check('target', 'add', 'team.test', 'lab', '192.0.2.10');
+    assert.ok(target.includes(`${prefix} use team.test lab`));
+    assert.doesNotMatch(check('show', 'team.test'), /Next steps:/);
+    check('disable', 'team.test');
+    const disabled = check('add', 'host', 'team.test', 'api');
+    assert.ok(disabled.includes(`${prefix} enable team.test`));
+    assert.ok(!disabled.includes(`${prefix} use team.test`));
+    const unchanged = await readFile(path, 'utf8');
+    const failed = run('target', 'remove', 'team.test', 'me');
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stdout, /Inspect available targets before choosing another:/);
+    assert.equal(await readFile(path, 'utf8'), unchanged);
+    const skipped = check('migrate', '--all');
+    assert.match(skipped, /No eligible imports/);
+    assert.match(skipped, /enable team.test/);
+    check('enable', 'team.test');
+    await writeFile(path, (await readFile(path, 'utf8')) + '192.0.2.1 one.test\n192.0.2.2 api.one.test\n');
+    assert.match(check('migrate', '--dry-run'), /Resolve the SKIP reasons above/);
 });
 
 test('no command in a non-interactive process shows help',

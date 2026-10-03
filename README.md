@@ -162,6 +162,11 @@ hostman migrate --help
 hostman target set --help
 ```
 
+In an interactive terminal, commands suggest relevant next steps using your group and target names.
+For example, after `add group`, you can copy a command to add a hostname to that group. Suggestions keep
+your custom hosts file path. Use `hostman --no-hints <command>` to hide them; scripts omit them automatically.
+Command help also includes related command examples.
+
 Hostman uses the system hosts file by default: `$env:SystemRoot\System32\drivers\etc\hosts` on Windows,
 or `/etc/hosts` on Linux/macOS. To work with an existing custom file, put its path before the command:
 

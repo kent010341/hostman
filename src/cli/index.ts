@@ -11,13 +11,15 @@ import {
     targetFrom, transform, type Operation
 } from '../domain/operations.js';
 import { candidates, parse } from '../hosts/document.js';
+import { errorHints, formatHints, operationHints, relatedHints, showHints, type Hint } from './hints.js';
 import {
     execute, readSource, sourcePath
 } from '../fs/storage.js';
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 type RootOptions = {
     hostsFile?: string;
-    elevate: boolean
+    elevate: boolean;
+    hints: boolean
 };
 type MigrationOptions = {
     group: string[];
@@ -39,15 +41,33 @@ const program = new Command()
     .option('--hosts-file <path>',
         'Use this hosts file instead of the platform default')
     .option('--no-elevate',
-        'Disable automatic interactive privilege elevation');
+        'Disable automatic interactive privilege elevation')
+    .option('--no-hints', 'Hide next-step suggestions in interactive terminals');
 program.configureHelp({ showGlobalOptions: true });
 program.addHelpText('after',
     '\nExamples:\n  hostman init\n  hostman migrate --dry-run\n'
     + '  hostman --hosts-file "./sample hosts" show all\n  hostman use foo.test prod');
 const list = (value: string, previous: string[]) => [...previous, value];
 function command(parent: Command, name: string, description: string, example: string): Command {
+    const key = `${parent === program ? '' : `${parent.name()} `}${name.split(' ')[0]}`;
     return parent.command(name).description(description).addHelpText('after',
-        `\nExample:\n  hostman ${example}`);
+        `\nExample:\n  hostman ${example}\n`
+        + formatHints(relatedHints(key)).replace('Next steps:', 'Related commands:'));
+}
+function suggest(hints: Hint[], path?: string): void {
+    if (interactive && program.opts<RootOptions>().hints && hints.length) {
+        console.log(formatHints(hints, program.opts<RootOptions>().hostsFile ? path : undefined));
+    }
+}
+function migrationRecovery(parsed: ReturnType<typeof parse>, skipped: boolean): Hint[] {
+    if (skipped) {
+        return [{ description: 'Resolve the SKIP reasons above, then preview again:', args: ['migrate', '--dry-run'] },
+            ...parsed.conflicts.length ? [{ description: 'Review repair options:', args: ['repair', '--help'] }] : []];
+    }
+    const hints = showHints(parsed, parsed.groups.map(g => g.group.name));
+    return hints.length
+        ? hints
+        : [{ description: 'View managed groups:', args: ['show', 'all'] }];
 }
 async function source() {
     return readSource(sourcePath(program.opts<RootOptions>().hostsFile));
@@ -120,6 +140,10 @@ async function mutate(operation: Operation, snapshot?: Awaited<ReturnType<typeof
         operation);
     if (next === current.text) {
         console.log(`No changes: ${current.path}`);
+        if (operation.kind === 'init') {
+            console.log('Hostman is already initialized.');
+        }
+        suggest(operationHints(operation, parse(next)), current.path);
         return;
     }
     const changed = await execute({
@@ -135,26 +159,17 @@ async function mutate(operation: Operation, snapshot?: Awaited<ReturnType<typeof
         notify: console.log
     });
     console.log(`${changed ? 'Updated' : 'No changes'}: ${current.path}`);
+    if (operation.kind === 'init') {
+        console.log('Hostman initialized.');
+    }
+    suggest(operationHints(operation, parse(next)), current.path);
 }
 command(program,
     'init',
     'Create an empty managed section; repeated runs preserve existing state.',
     'init').action(async () => {
     const snapshot = await source();
-    const initialized = Boolean(parse(snapshot.text).outer);
     await mutate({ kind: 'init' }, snapshot);
-    console.log(initialized ? '\nHostman is already initialized.' : '\nHostman initialized.');
-    console.log('\nNext steps:\n'
-            + '  Import existing hosts rules:\n'
-            + '    hostman migrate --dry-run\n'
-            + '    hostman migrate\n\n'
-            + '  Create your first mapping:\n'
-            + '    hostman add group example.com --target local=127.0.0.1 --host @\n\n'
-            + '  Open the guided menu:\n'
-            + '    hostman');
-    if (program.opts<RootOptions>().hostsFile) {
-        console.log('\nFor these commands, include --hosts-file with the same path used for init.');
-    }
 });
 command(program,
     'migrate',
@@ -187,10 +202,13 @@ command(program,
         const eligible = found.filter(c => !c.reason && (!requested.length || requested.includes(c.group)));
         if (options.dryRun) {
             console.log(`Eligible: ${eligible.map(c => c.group).join(', ') || 'none'}`);
+            suggest(eligible.length ? [{ description: 'Import the groups you select:', args: ['migrate'] }]
+                : migrationRecovery(parsed, found.some(c => c.reason)), snapshot.path);
             return;
         }
         if (!eligible.length) {
             console.log('No eligible imports; no changes.');
+            suggest(migrationRecovery(parsed, found.some(c => c.reason)), snapshot.path);
             return;
         }
         let selected = eligible.map(c => c.group);
@@ -253,6 +271,7 @@ command(program,
     for (const conflict of parsed.conflicts) {
         console.log(`CONFLICT${conflict.group ? ` ${conflict.group}` : ''}: ${conflict.message}`);
     }
+    suggest(showHints(parsed, groups.map(g => g.group.name)), snapshot.path);
 });
 const add = command(program,
     'add',
@@ -523,13 +542,17 @@ program.action(async () => {
     const opts = program.opts<RootOptions>();
     const hostArguments = opts.hostsFile ? ['--hosts-file', opts.hostsFile] : [];
     const elevationArguments = opts.elevate ? [] : ['--no-elevate'];
-    const globals = [...hostArguments, ...elevationArguments];
+    const globals = [...hostArguments, ...elevationArguments, ...opts.hints ? [] : ['--no-hints']];
     await program.parseAsync([...globals, ...choice.split(' ')],
         { from: 'user' });
 });
 try {
     await program.parseAsync();
 } catch (error) {
-    console.error(`Error: ${(error as Error).message}`);
+    const message = (error as Error).message;
+    console.error(`Error: ${message}`);
+    const args = program.args[0] ? [program.args[0]] : [];
+    suggest(errorHints(message, args),
+        program.opts<RootOptions>().hostsFile ? sourcePath(program.opts<RootOptions>().hostsFile) : undefined);
     process.exitCode = 1;
 }
