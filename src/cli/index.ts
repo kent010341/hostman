@@ -245,17 +245,17 @@ const add = command(program,
 command(add,
     'group [group]',
     'Create a group with explicit initial targets.',
-    'add group foo.test --target local=127.0.0.1 --host @')
+    'add group foo.test --target local=127.0.0.1')
     .option('--target <name=value>',
         'Initial target IP or @global-reference; repeat to add targets',
         list,
         [])
     .option('--active <target>',
         'Active target (default: first initial target)')
-    .option('--host <hostname>',
-        'Initial hostname, short subdomain, or @; repeat',
-        list,
-        [])
+    .addOption(new Option('--host <hostname>',
+        'Initial hostname, short subdomain, or @; repeat')
+        .argParser(list)
+        .default([], '@ when omitted'))
     .option('--disabled',
         'Create a disabled group (default: enabled)')
     .action(async (name: string | undefined, options: GroupOptions) => {
@@ -279,12 +279,13 @@ command(add,
             spec.slice(index + 1));
         });
         const { expandHost } = await import('../domain/operations.js');
+        const hosts = options.host.length ? options.host : ['@'];
         const group: Group = {
             name: groupName,
             targets,
             activeTarget: options.active ?? targets[0].name,
             enabled: !options.disabled,
-            hosts: options.host.map((h: string) => expandHost(groupName,
+            hosts: hosts.map((h: string) => expandHost(groupName,
                 h))
         };
         await mutate({

@@ -48,7 +48,11 @@ references a global target named `local`. Changing its IP updates enabled groups
 Referenced globals and active group targets cannot be removed.
 
 When creating a group, repeat `--target name=value` and `--host hostname` as needed. The first initial target
-is active unless `--active <name>` is specified. `--disabled` creates the group without effective rules.
+is active unless `--active <name>` is specified. Omitting `--host` includes the group root hostname by default.
+Explicit `--host` options define the complete initial hostname list; use `@` to include the root.
+`--disabled` creates the group without effective rules.
+
+If an older version created an empty group, add its root with `hostman add host <group> @`.
 
 ## Source files and permissions
 

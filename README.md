@@ -47,17 +47,23 @@ skipped with an explanation; fix those rules before trying again.
 
 ### Starting a new project?
 
-Create a group with local and lab targets:
+Create a group pointing to your local machine, then add a lab target:
 
 ```sh
 hostman init
-hostman add group foo.test --target local=127.0.0.1 --target lab=10.20.0.10 --host @ --host api
+hostman add group foo.test --target local=127.0.0.1
+hostman add host foo.test api
+hostman target add foo.test lab 10.20.0.10
 hostman show foo.test
 hostman use foo.test lab
 ```
 
 This creates `foo.test` and `api.foo.test`. The first target, `local`, is initially active.
 The final command switches both names to the lab IP. Replace the example domain and IPs with your own.
+
+Without `--host`, `add group` includes the root hostname (`foo.test`) automatically. To choose the initial
+hostnames explicitly, use `--host @ --host api` for the root and `api.foo.test`, or `--host api` for only
+`api.foo.test`.
 
 For a guided menu, run `hostman` without a command. Commands also prompt for missing inputs in a terminal.
 

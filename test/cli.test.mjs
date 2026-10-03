@@ -6,6 +6,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { parse } from '../dist/hosts/document.js';
 const entry = resolve('dist/cli/index.js');
 function cli(args, env = process.env) {
     return spawnSync(process.execPath,
@@ -184,6 +185,56 @@ test('complete CLI lifecycle, dry-run, and repeated migration',
         ]).status,
         0);
     });
+for (const scenario of [
+    { name: 'omitted hosts include the root', args: [], hosts: ['my.dev'], enabled: true },
+    { name: 'explicit hosts replace the default', args: ['--host', 'api'], hosts: ['api.my.dev'], enabled: true },
+    { name: 'explicit root is included once', args: ['--host', '@'], hosts: ['my.dev'], enabled: true },
+    { name: 'disabled groups retain the default root', args: ['--disabled'], hosts: ['my.dev'], enabled: false }
+]) {
+    test(`add group: ${scenario.name}`, async (t) => {
+        const dir = await mkdtemp(join(tmpdir(), 'hostman-add-group-'));
+        t.after(() => rm(dir, { recursive: true, force: true }));
+        const path = join(dir, 'sample hosts');
+        const original = '127.0.0.1 localhost\n';
+        await writeFile(path, original);
+        const initialized = cli(['--hosts-file', path, 'init']);
+        assert.equal(initialized.status, 0, initialized.stderr);
+        const result = cli([
+            '--hosts-file', path, 'add', 'group', 'my.dev', '--target', 'me=127.0.0.1', ...scenario.args
+        ]);
+        assert.equal(result.status, 0, result.stderr);
+        const content = await readFile(path, 'utf8');
+        assert.ok(content.startsWith(original));
+        const parsed = parse(content);
+        assert.deepEqual(parsed.conflicts, []);
+        assert.equal(parsed.groups.length, 1);
+        const managed = parsed.groups[0];
+        assert.equal(managed.status, 'CLEAN');
+        assert.deepEqual(managed.group.hosts, scenario.hosts);
+        assert.equal(managed.group.activeTarget, 'me');
+        assert.equal(managed.group.enabled, scenario.enabled);
+        assert.deepEqual(managed.effective.flatMap(rule => rule.hosts), scenario.enabled ? scenario.hosts : []);
+        for (const rule of managed.effective) {
+            assert.equal(rule.ip, '127.0.0.1');
+        }
+    });
+}
+
+test('default group root rejects an unmanaged duplicate without writing', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'hostman-add-duplicate-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const path = join(dir, 'sample hosts');
+    const original = '10.0.0.1 my.dev # existing mapping\n';
+    await writeFile(path, original);
+    const initialized = cli(['--hosts-file', path, 'init']);
+    assert.equal(initialized.status, 0, initialized.stderr);
+    const before = await readFile(path, 'utf8');
+    const result = cli(['--hosts-file', path, 'add', 'group', 'my.dev', '--target', 'me=127.0.0.1']);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /my\.dev also exists outside hostman/);
+    assert.equal(await readFile(path, 'utf8'), before);
+});
+
 test('no command in a non-interactive process shows help',
     () => {
         const result = cli([]);
