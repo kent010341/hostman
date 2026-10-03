@@ -6,6 +6,8 @@ See the [README](../README.md) for installation, quick starts, and common tasks.
 
 `init` creates an empty managed section. Repeated runs preserve existing state without writing. It does not
 import rules or create a global `local` target. Conflicting managed documents require repair first.
+In an interactive terminal, `init` suggests commands to import existing rules, create a mapping, or open the guided
+menu. Repeated runs also provide suggestions. Suggested commands retain the custom `--hosts-file` path.
 
 `migrate` scans current unmanaged effective rules on every run. Without selection flags it previews candidates,
 collects selections, and confirms the move. A missing managed section is created only during an actual import.
@@ -48,7 +50,11 @@ references a global target named `local`. Changing its IP updates enabled groups
 Referenced globals and active group targets cannot be removed.
 
 When creating a group, repeat `--target name=value` and `--host hostname` as needed. The first initial target
-is active unless `--active <name>` is specified. `--disabled` creates the group without effective rules.
+is active unless `--active <name>` is specified. Omitting `--host` includes the group root hostname by default.
+Explicit `--host` options define the complete initial hostname list; use `@` to include the root.
+`--disabled` creates the group without effective rules.
+
+If an older version created an empty group, add its root with `hostman add host <group> @`.
 
 ## Source files and permissions
 
