@@ -92,8 +92,17 @@ test('complete CLI lifecycle, dry-run, and repeated migration',
         assert.equal(await readFile(path,
             'utf8'),
         before);
-        run('init');
-        run('init');
+        const initialized = run('init');
+        assert.match(initialized, /Hostman initialized\./);
+        const repeatedInit = run('init');
+        assert.match(repeatedInit, /Hostman is already initialized\./);
+        for (const output of [initialized, repeatedInit]) {
+            assert.match(output, /Next steps:/);
+            assert.match(output, /hostman migrate --dry-run\n\s+hostman migrate/);
+            assert.match(output, /hostman add group example\.com --target local=127\.0\.0\.1 --host @/);
+            assert.match(output, /Open the guided menu:\n\s+hostman\n/);
+            assert.match(output, /include --hosts-file with the same path/);
+        }
         run('migrate',
             '--all');
         const migrated = await readFile(path,

@@ -6,6 +6,8 @@ See the [README](../README.md) for installation, quick starts, and common tasks.
 
 `init` creates an empty managed section. Repeated runs preserve existing state without writing. It does not
 import rules or create a global `local` target. Conflicting managed documents require repair first.
+After a successful run, `init` suggests commands to import existing rules, create a mapping, or open the guided
+menu. Repeated runs show the same suggestions. With a custom source, keep using the same `--hosts-file` path.
 
 `migrate` scans current unmanaged effective rules on every run. Without selection flags it previews candidates,
 collects selections, and confirms the move. A missing managed section is created only during an actual import.

@@ -139,7 +139,23 @@ async function mutate(operation: Operation, snapshot?: Awaited<ReturnType<typeof
 command(program,
     'init',
     'Create an empty managed section; repeated runs preserve existing state.',
-    'init').action(async () => mutate({ kind: 'init' }));
+    'init').action(async () => {
+    const snapshot = await source();
+    const initialized = Boolean(parse(snapshot.text).outer);
+    await mutate({ kind: 'init' }, snapshot);
+    console.log(initialized ? '\nHostman is already initialized.' : '\nHostman initialized.');
+    console.log('\nNext steps:\n'
+            + '  Import existing hosts rules:\n'
+            + '    hostman migrate --dry-run\n'
+            + '    hostman migrate\n\n'
+            + '  Create your first mapping:\n'
+            + '    hostman add group example.com --target local=127.0.0.1 --host @\n\n'
+            + '  Open the guided menu:\n'
+            + '    hostman');
+    if (program.opts<RootOptions>().hostsFile) {
+        console.log('\nFor these commands, include --hosts-file with the same path used for init.');
+    }
+});
 command(program,
     'migrate',
     'Preview and import explicitly selected unmanaged rules.',
