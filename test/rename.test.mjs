@@ -10,7 +10,10 @@ import { transform } from '#hostman/domain/operations';
 import { sha256 } from '#hostman/domain/model';
 import { readSource, run } from '#hostman/fs/storage';
 
-/** Build enabled and disabled groups with active and inactive shared references. @returns Managed fixture text. */
+/**
+ * Build enabled and disabled groups with literal destinations and direct shared selections.
+ * @returns Managed fixture text.
+ */
 function fixture() {
     return serialize(parse('127.0.0.1 localhost\r\n'), {
         version: 1,
@@ -18,11 +21,11 @@ function fixture() {
         groups: ['example.com', 'example.net', 'example.org'].map((name, index) => ({
             name,
             enabled: index !== 1,
-            activeTarget: index === 2 ? 'literal' : 'local',
+            activeTarget: index === 2 ? 'literal' : '@shared',
             targets: [
-                { name: 'local', source: 'global', globalName: 'shared' },
-                { name: 'backup', source: 'global', globalName: 'shared' },
-                { name: 'literal', source: 'group', ip: '192.0.2.3' }
+                { name: 'local', ip: '192.0.2.1' },
+                { name: 'backup', ip: '192.0.2.1' },
+                { name: 'literal', ip: '192.0.2.3' }
             ],
             hosts: [name]
         }))
@@ -34,37 +37,37 @@ test('group rename preserves destinations, enabled state and active selection', 
     const before = fixture();
     for (const group of ['example.com', 'example.net']) {
         for (const target of ['local', 'backup', 'literal']) {
+            /** Exercise active literal renames alongside the fixture's direct global selections. */
+            const selected = transform(before, { kind: 'use', group, target });
             /** Renamed text includes a recomputed group digest. */
-            const result = transform(before, { kind: 'target-rename', group, target, newName: 'renamed' });
+            const result = transform(selected, { kind: 'target-rename', group, target, newName: 'renamed' });
             /** Expected document differs only in target names and the matching active selection. */
-            const expected = parse(before).document;
+            const expected = parse(selected).document;
             /** Group whose active and inactive targets are exercised. */
             const owner = expected.groups.find(g => g.name === group);
             owner.targets.find(t => t.name === target).name = 'renamed';
             if (owner.activeTarget === target) {
                 owner.activeTarget = 'renamed';
             }
-            assert.deepEqual(parse(result).document, parse(serialize(parse(before), expected)).document);
+            assert.deepEqual(parse(result).document, parse(serialize(parse(selected), expected)).document);
             assert.ok(parse(result).groups.every(g => g.status === 'CLEAN'));
-            assert.deepEqual(result.match(/^192\.0\.2\..*$/gm), before.match(/^192\.0\.2\..*$/gm));
+            assert.deepEqual(result.match(/^192\.0\.2\..*$/gm), selected.match(/^192\.0\.2\..*$/gm));
         }
     }
 });
 
-test('global rename updates all active, inactive and disabled references', () => {
-    /** Source containing multiple references in each group. */
+test('global rename updates direct active selections including disabled groups', () => {
+    /** Source containing enabled and disabled global consumers and an unrelated literal consumer. */
     const before = fixture();
-    /** Expected definitions keep local names and active selections. */
+    /** Expected definitions keep literal targets and redirect direct global selections. */
     const expected = parse(before).document;
     expected.globals[0].name = 'renamed';
     for (const group of expected.groups) {
-        for (const target of group.targets) {
-            if (target.source === 'global') {
-                target.globalName = 'renamed';
-            }
+        if (group.activeTarget === '@shared') {
+            group.activeTarget = '@renamed';
         }
     }
-    /** All referencing blocks must receive fresh digests. */
+    /** All selecting blocks must receive fresh digests. */
     const result = transform(before, { kind: 'global-rename', name: 'shared', newName: 'renamed' });
     assert.deepEqual(parse(result).document, expected);
     assert.ok(parse(result).groups.every(g => g.status === 'CLEAN'));
@@ -105,10 +108,10 @@ test('renames preserve valid manual additions and block affected conflicts', () 
     }
 });
 
-test('global rename permits unrelated group conflicts and unreferenced globals', () => {
-    /** Broken group does not reference the global being renamed. */
+test('global rename permits unrelated group conflicts and unselected globals', () => {
+    /** Broken group does not select the global being renamed. */
     const before = fixture().replace('192.0.2.1 example.com', '192.0.2.99 example.com');
-    /** Unreferenced global can change without rewriting damaged or unrelated group blocks. */
+    /** Unselected global can change without rewriting damaged or unrelated group blocks. */
     const result = transform(before, { kind: 'global-rename', name: 'other', newName: 'unused' });
     assert.equal(result, before.replace('# global other=', '# global unused='));
     assert.equal(transform(result, { kind: 'global-rename', name: 'unused', newName: 'unused' }), result);

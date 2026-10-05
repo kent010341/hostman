@@ -40,6 +40,48 @@ async function fixture(t) {
     };
 }
 
+test('compiled helper replays direct global selection and rejects a missing global', async t => {
+    /** Disposable source receiving direct global operations. */
+    const f = await fixture(t);
+    /** Initialized group has one local destination and a shared alternative. */
+    let text = transform(f.source.text, { kind: 'init' });
+    text = transform(text, { kind: 'global-add', name: 'shared', ip: '127.0.0.2' });
+    text = transform(text, {
+        kind: 'add-group', group: {
+            name: 'example.test', enabled: true, activeTarget: 'local',
+            targets: [{ name: 'local', ip: '127.0.0.1' }], hosts: ['example.test']
+        }
+    });
+    await writeFile(f.path, text);
+    /** Source snapshot approved before helper execution. */
+    const source = await readSource(f.path);
+    /** Direct selection is replayed without prompts or target creation. */
+    const operation = { kind: 'use', group: 'example.test', target: '@shared' };
+    /** Exact preview bytes required by the helper protocol. */
+    const expected = transform(text, operation);
+    /** Fully specified replay request. */
+    const request = { ...f.request, sourceDigest: source.digest, operation, resultDigest: sha256(expected) };
+    await assert.rejects(commit({ ...request, resultDigest: '0'.repeat(64) }), /approved preview/);
+    /** Request file passed to the real compiled helper. */
+    const path = join(f.dir, 'global-request.json');
+    /** Serialized protocol bytes with an independent hash. */
+    const bytes = JSON.stringify(request);
+    await writeFile(path, bytes);
+    await run(process.execPath, [resolve('dist/fs/helper.js'), '--commit-request', path, sha256(bytes)]);
+    assert.equal(await readFile(f.path, 'utf8'), expected);
+    assert.equal(parse(expected).document.groups[0].activeTarget, '@shared');
+    /** Invalid replay must fail before replacing the source. */
+    const invalid = JSON.stringify({
+        ...request, sourceDigest: sha256(expected), operation: { ...operation, target: '@missing' }
+    });
+    await rm(`${path}.result`);
+    await writeFile(path, invalid);
+    await assert.rejects(run(process.execPath,
+        [resolve('dist/fs/helper.js'), '--commit-request', path, sha256(invalid)]));
+    assert.equal(await readFile(f.path, 'utf8'), expected);
+    assert.match(JSON.parse(await readFile(`${path}.result`, 'utf8')).error, /Missing global target/);
+});
+
 test('compiled commit helper replays migration names and verifies the approved digest', async t => {
     /** Disposable source and directory shared with the existing transaction fixtures. */
     const f = await fixture(t);

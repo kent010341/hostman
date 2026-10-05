@@ -35,12 +35,18 @@ export type Operation = {
     group: string;
     host: string;
 } | {
+    /** Select a group-owned or directly shared destination. */
     kind: 'use';
+    /** Group receiving the selection. */
     group: string;
+    /** Group target name or @global name. */
     target: string;
 } | {
+    /** Define or replace a group-owned literal destination. */
     kind: 'target-add' | 'target-set';
+    /** Group owning the destination. */
     group: string;
+    /** Named literal IP, without a global reference. */
     target: Target;
 } | {
     kind: 'target-remove';
@@ -63,7 +69,7 @@ export type Operation = {
     /** Replacement target name, unique within the group. */
     newName: string;
 } | {
-    /** Rename a shared target and every explicit reference to it. */
+    /** Rename a shared target and every direct active selection of it. */
     kind: 'global-rename';
     /** Existing shared target name. */
     name: string;
@@ -83,22 +89,11 @@ export function expandHost(group: string, value: string): string {
     }
     return host;
 }
-export function targetFrom(name: string, value: string): Target {
-    return value.startsWith('@') ? {
-        name,
-        source: 'global',
-        globalName: value.slice(1)
-    } : {
-        name,
-        source: 'group',
-        ip: value
-    };
-}
 /**
- * Mutate a cloned managed document and validate every affected scope.
- * @param document Current hosts-derived state, which remains unchanged.
- * @param operation Replayable mutation; renames preserve destinations and update dependent names.
- * @returns Updated document and group names requiring serialization.
+ * Apply one mutation to a clone and validate its affected scope.
+ * @param document Original managed state, left unchanged.
+ * @param operation Complete replayable mutation.
+ * @returns Updated state and groups requiring serialization.
  */
 export function applyOperation(document: HostmanDocument, operation: Operation): {
     document: HostmanDocument;
@@ -149,6 +144,7 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
             break;
         }
         case 'use': {
+            /** Group whose selected destination changes without adding targets. */
             const g = group(operation.group);
             resolveTarget(doc,
                 g,
@@ -221,8 +217,7 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
                 doc.globals[index].ip = operation.ip;
             }
             for (const g of doc.groups) {
-                if (g.enabled && g.targets.some(t => t.name === g.activeTarget
-                && t.source === 'global' && t.globalName === operation.name)) {
+                if (g.enabled && g.activeTarget === `@${operation.name}`) {
                     touched.add(g.name);
                 }
             }
@@ -242,21 +237,20 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
             }
             target.name = operation.newName;
             for (const g of doc.groups) {
-                for (const reference of g.targets) {
-                    if (reference.source === 'global' && reference.globalName === operation.name) {
-                        reference.globalName = operation.newName;
-                        touched.add(g.name);
-                    }
+                if (g.activeTarget === `@${operation.name}`) {
+                    g.activeTarget = `@${operation.newName}`;
+                    touched.add(g.name);
                 }
             }
             break;
         }
         case 'global-remove': {
-            const references = doc.groups.filter(g => g.targets.some(t => t.source === 'global'
-                && t.globalName === operation.name));
+            /** Groups retaining this shared selection, including disabled groups. */
+            const references = doc.groups.filter(g => g.activeTarget === `@${operation.name}`);
             if (references.length) {
+                /** Group names explaining why deletion is blocked. */
                 const names = references.map(g => g.name).join(', ');
-                throw new HostmanError(`Cannot remove referenced global target ${operation.name}: ${names}.`);
+                throw new HostmanError(`Cannot remove selected global target ${operation.name}: ${names}.`);
             }
             if (!doc.globals.some(t => t.name === operation.name)) {
                 throw new HostmanError('Unknown global target.');
@@ -267,8 +261,9 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
         case 'repair': {
             const g = group(operation.group);
             if (operation.strategy === 'keep') {
+                /** Only literal group targets may adopt an effective IP. */
                 const target = g.targets.find(t => t.name === g.activeTarget);
-                if (!target || target.source !== 'group') {
+                if (!target) {
                     throw new HostmanError('Keep effective IP requires a group-owned active target. '
                         + 'Repair shared globals explicitly.');
                 }
@@ -392,7 +387,7 @@ export function transform(text: string, operation: Operation): string {
             if (g) {
                 g.hosts = [...new Set([...g.hosts, ...candidate.hosts])];
                 g.targets.push(...targets.filter(t => t.create).map(t => ({
-                    name: t.name, source: 'group' as const, ip: t.ip
+                    name: t.name, ip: t.ip
                 })));
             } else {
                 /** Original selected IP identifies the renamed active target without changing its semantics. */
@@ -401,7 +396,7 @@ export function transform(text: string, operation: Operation): string {
                     name: candidate.group,
                     enabled: candidate.enabled,
                     activeTarget: targets.find(t => ipKey(t.ip) === ipKey(active.ip))!.name,
-                    targets: targets.map(t => ({ name: t.name, source: 'group', ip: t.ip })),
+                    targets: targets.map(t => ({ name: t.name, ip: t.ip })),
                     hosts: candidate.hosts
                 });
             }
@@ -414,10 +409,10 @@ export function transform(text: string, operation: Operation): string {
     const affected = 'group' in operation
         ? typeof operation.group === 'string' ? operation.group : operation.group.name
         : undefined;
+    /** Global mutations also validate groups directly selecting the shared destination. */
     const hasAffectedConflict = parsed.conflicts.some(c => !c.group || c.group === affected
         || (!affected && parsed.document.groups.some(g => g.name === c.group
-            && g.targets.some(t => t.source === 'global'
-                && 'name' in operation && t.globalName === operation.name))));
+            && 'name' in operation && g.activeTarget === `@${operation.name}`)));
     if (operation.kind !== 'repair' && hasAffectedConflict) {
         throw new HostmanError('Conflicted scope. Run hostman repair before mutation.');
     }

@@ -15,6 +15,12 @@ function addTarget(group: string, names: string[]): Hint {
     return hint('Add another target:', 'target', 'add', group, name, '192.0.2.10');
 }
 
+/**
+ * Suggest actions using the resulting state and explicit global selections.
+ * @param operation Completed mutation.
+ * @param parsed Validated resulting hosts state.
+ * @returns Contextual next-step commands without performing I/O.
+ */
 export function operationHints(operation: Operation, parsed: ParseResult): Hint[] {
     if (operation.kind === 'init') {
         return [
@@ -31,20 +37,17 @@ export function operationHints(operation: Operation, parsed: ParseResult): Hint[
         return [view('all')];
     }
     if (operation.kind === 'global-add') {
+        /** First valid group that can select the newly created shared destination. */
         const group = parsed.document.groups.find(g => !parsed.conflicts.some(c => c.group === g.name));
-        let name = operation.name;
-        while (group?.targets.some(t => t.name === name)) {
-            name += '-new';
-        }
-        return group ? [hint('Reference this global target in a group:',
-            'target', 'add', group.name, name, `@${operation.name}`), view(group.name)]
+        return group ? [hint('Switch to this global target:',
+            'use', group.name, `@${operation.name}`), view(group.name)]
             : parsed.document.groups.length ? [view('all'),
-                hint('Learn how to reference a global target:', 'target', 'add', '--help')]
-                : [create(), hint('Learn how to reference a global target:', 'target', 'add', '--help')];
+                hint('Learn how to select a global target:', 'use', '--help')]
+                : [create(), hint('Learn how to select a global target:', 'use', '--help')];
     }
     if (operation.kind === 'global-set') {
-        const affected = parsed.document.groups.filter(g => g.targets.some(t =>
-            t.source === 'global' && t.globalName === operation.name));
+        /** Groups retaining the modified global selection. */
+        const affected = parsed.document.groups.filter(g => g.activeTarget === `@${operation.name}`);
         return [view(affected.length === 1 ? affected[0].name : 'all')];
     }
     if (operation.kind === 'global-remove' || operation.kind === 'remove-group') {
@@ -125,6 +128,11 @@ export function formatHints(hints: Hint[], source?: string, platform = process.p
     }).join('\n\n');
 }
 
+/**
+ * Provide related command examples independently of runtime hint settings.
+ * @param key Command path receiving help.
+ * @returns Relevant examples, including direct global selection.
+ */
 export function relatedHints(key: string): Hint[] {
     if (key === 'init') {
         return [hint('Import existing rules:', 'migrate', '--dry-run'), create()];
@@ -136,7 +144,10 @@ export function relatedHints(key: string): Hint[] {
         return [view('all')];
     }
     if (key.startsWith('global')) {
-        return [hint('Reference a global target:', 'target', 'add', 'example.com', 'shared', '@local'), view('all')];
+        return [hint('Switch to a global target:', 'use', 'example.com', '@local'), view('all')];
+    }
+    if (key === 'use') {
+        return [hint('Switch to a global target:', 'use', 'example.com', '@local'), view('example.com')];
     }
     if (key.startsWith('target') || key === 'add host') {
         return [hint('Switch targets:', 'use', 'example.com', 'lab'), view('example.com')];

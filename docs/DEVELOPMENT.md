@@ -42,7 +42,7 @@ helper replay. Windows tests perform real file replacement and ACL checks. Unix 
 symlinks when run on Unix. No CI workflow is tracked in this checkout; run the checks on each target platform
 before claiming cross-platform validation.
 
-`test/rename.test.mjs` covers group and global target renaming, active selection and reference preservation,
+`test/rename.test.mjs` covers group and global target renaming, literal target and direct active selection preservation,
 disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive target selection and
 selection/naming cancellation, and compiled helper replay.
 
@@ -66,6 +66,14 @@ command shims and a write to a temporary hosts fixture.
 
 The selected hosts file is the sole source of truth. All managed state is reconstructable without a database
 or project metadata. A group's semantic SHA-256 digest identifies valid manual changes; it is not a cache.
+
+Group destinations contain only `{ name, ip }` literal targets. The active selection stores a group target
+name or `@global-name`; direct global selection requires no group target definition. Empty target lists are
+valid when a global is selected. Parsing, validation, serialization, migration, repair and helper replay use
+the same resolver. Global updates serialize only enabled consumers, while disabled selections still prevent
+global deletion. Migration reuses a semantically matching active global before considering group targets.
+The v1 markers and semantic digest structure remain unchanged; there is no compatibility or conversion layer
+for the former `# target alias=@global` format.
 
 Writes prepare and flush a same-directory temporary file, validate the result, recheck the source digest,
 and replace the destination. Unix mode/ownership and Windows attributes/ACLs are retained. Symlink destinations

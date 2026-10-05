@@ -83,17 +83,24 @@ hostman repair [group] [--strategy restore | keep]
 - `init` creates an empty outer managed section. Repeated valid initialization makes no byte changes.
   It preserves valid manual edits, imports nothing, and creates no global target. Conflicts are rejected.
 - Other mutations require initialization, but `migrate` can create the section during an actual import.
-- Creating a group defaults its active target to the first initial target. Without `--host`, it includes
-  the group root. Explicit `--host` options are the complete initial list; `@` means root and `api` expands
+- Creating a group defaults its active target to the first initial target. `--active @global-name` directly
+  selects a global; without `--target`, it creates no group targets and skips the initial target prompt.
+  Without `--host`, it includes the group root. Explicit `--host` options are the complete initial list;
+  `@` means root and `api` expands
   to `api.<group>`. Empty groups remain representable after removing their last hostname.
 - Each group has an enabled flag, active target, targets, and owned hostnames. Enabled hostnames share the
   resolved active IP. Disabled groups keep their definitions but have no effective mappings.
-- A group target is a literal IP or an explicit `@global-name` reference. Names do not imply environments.
-  Global IP changes propagate to enabled groups actively referencing them. An active group target cannot
-  be removed, and referenced global targets cannot be removed.
+- Group targets contain literal IPs only. `use <group> <name>` selects a group target;
+  `use <group> @global-name` selects a global directly, stored as `active=@global-name`, without a group target.
+  The interactive switch menu lists group targets first, then all globals, showing source and IP.
+  Names do not imply environments. Global IP changes propagate to enabled groups directly selecting them;
+  disabled groups retain their selection and use the latest IP when enabled. An active group target cannot
+  be removed, and globals selected by any group, including disabled groups, cannot be removed.
+  Group targets may be empty when the active selection resolves to an existing global. The former group
+  reference format is unsupported; there is no compatibility or conversion layer.
 - Group target renames preserve destinations and update the stored active selection when applicable.
-  Global renames update all explicit references, including inactive targets and disabled groups, preserving
-  group-local target names and IPs. Both are available in the guided menu and use replayable transactions.
+  Global renames update direct active selections, including disabled groups, preserving
+  group-owned targets and all IPs. Both are available in the guided menu and use replayable transactions.
   In interactive terminals, omitted existing target names are selected from the current scope's list and
   new names use text input. Group renames select an omitted group first; explicit arguments skip prompts.
   Empty target lists report actionable errors; scripts require complete arguments.
@@ -119,7 +126,8 @@ hostman repair [group] [--strategy restore | keep]
 - Structural document conflicts block mutations. Group-scoped conflicts block affected mutations;
   unaffected valid groups remain inspectable. Never bypass validation through elevation or serialization.
 - Repair `restore` regenerates configured rules. `keep` adopts one unambiguous effective IP into a
-  group-owned active target; it cannot silently update a global or invent targets. Structural damage needs
+  group-owned active target; it is unavailable for direct global selections and cannot update a global or
+  invent targets. Structural damage needs
   manual correction. Inspect available repair strategies rather than silently choosing one.
 - Migration rescans current unmanaged effective and commented rules on every run. After indentation or a
   BOM, removing exactly one leading `#` must produce a hosts rule; adjacent or spaced IPs qualify, double
@@ -140,8 +148,8 @@ hostman repair [group] [--strategy restore | keep]
   list targets, hosts and active state separately. SKIP blocks show the reason, source rules sorted by original
   line number with same-line aliases combined, and an action; they omit hypothetical targets and active state.
   Candidate reasons and source occurrences remain separate; domain/helper errors retain source diagnostics.
-- Compatible existing groups merge hosts and missing targets without changing enabled state, active target,
-  existing definitions or global references. Matching IPs reuse the active target first, then the first
+- Compatible existing groups merge hosts and missing targets without changing enabled state, active target
+  or existing definitions. Matching IPs reuse the active selection first, including a direct global, then the first
   matching existing target. Enabled groups require matching effective input; disabled groups only accept
   commented input. Same-group outside duplicates can be absorbed, resolving only their unmanaged hostname
   conflicts. Other managed conflicts and cross-group ownership remain blocking. Skip details identify source
@@ -212,6 +220,9 @@ hostman repair [group] [--strategy restore | keep]
   Simulated TTY tests exercise real Inquirer inputs, target naming, cancellation and final confirmation.
   Compiled helper tests verify custom-name replay and invalid-name rejection. They do not prove actual UAC
   or sudo authentication.
+- Direct global regression coverage includes empty group targets, same-named local/global selections,
+  disabled deletion protection, affected conflicts, semantic migration reuse, repair restrictions,
+  simulated TTY selection/cancellation and compiled helper replay.
 - For permission changes, validate actual elevation separately against disposable protected fixtures when
   the platform is available. `npm run smoke:elevation` is the Windows UAC check from an unelevated terminal.
   Report unavailable Unix sudo, symlink, or metadata checks; do not claim cross-platform validation from one OS.

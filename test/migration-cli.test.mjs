@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { parse } from '#hostman/hosts/document';
+import { transform } from '#hostman/domain/operations';
 
 /** Absolute built CLI entry used by subprocess integration checks. */
 const entry = resolve('dist/cli/index.js');
@@ -72,6 +73,73 @@ function interactive(f, args, steps) {
         });
     });
 }
+
+for (const cancel of [false, true]) {
+    test(`TTY target selection exposes direct globals: cancel=${cancel}`, async t => {
+        /** Seed a local destination and a same-named global to prove explicit selection. */
+        let source = transform('', { kind: 'init' });
+        source = transform(source, { kind: 'global-add', name: 'local', ip: '127.0.0.2' });
+        source = transform(source, {
+            kind: 'add-group', group: {
+                name: 'example.test', enabled: true, activeTarget: 'local',
+                targets: [{ name: 'local', ip: '127.0.0.1' }], hosts: ['example.test']
+            }
+        });
+        /** Dedicated hosts fixture and real Inquirer prompts. */
+        const f = await fixture(t, source);
+        /** Move from the first local choice to the global choice, or cancel. */
+        const result = await interactive(f, ['use', 'example.test'], [
+            { prompt: '@local (global, 127.0.0.2)', keys: cancel ? '\u0003' : '\u001b[B\r' }
+        ]);
+        assert.match(result.output, /local \(group, 127.0.0.1\)/);
+        assert.equal(result.steps, 1);
+        if (cancel) {
+            assert.equal(await readFile(f.path, 'utf8'), source);
+        } else {
+            assert.equal(result.code, 0, result.errors);
+            assert.equal(parse(await readFile(f.path, 'utf8')).document.groups[0].activeTarget, '@local');
+        }
+    });
+}
+
+test('CLI creates a global-only group and rejects reference target values without writing', async t => {
+    /** Global definition exists before group creation. */
+    const source = transform(transform('', { kind: 'init' }), {
+        kind: 'global-add', name: 'local', ip: '127.0.0.1'
+    });
+    /** Disposable fixture reused by scripted and interactive invocations. */
+    const f = await fixture(t, source);
+    /** Explicit global active skips the initial-target prompt in a terminal. */
+    const created = await interactive(f,
+        ['add', 'group', 'example.test', '--active', '@local', '--host', '@'], []);
+    assert.equal(created.code, 0, created.errors);
+    assert.doesNotMatch(created.output, /Initial target name/);
+    /** Successful source must contain no group target definitions. */
+    const saved = await readFile(f.path, 'utf8');
+    assert.deepEqual(parse(saved).document.groups[0].targets, []);
+    for (const args of [
+        ['target', 'add', 'example.test', 'shared', '@local'],
+        ['add', 'group', 'other.test', '--target', 'shared=@local', '--host', '@'],
+        ['use', 'example.test', '@missing'],
+        ['global', 'remove', 'local']
+    ]) {
+        /** Invalid inputs and deletion of a selected global must preserve the source. */
+        const result = spawnSync(process.execPath, [entry, '--hosts-file', f.path, ...args], { encoding: 'utf8' });
+        assert.notEqual(result.status, 0);
+        assert.equal(await readFile(f.path, 'utf8'), saved);
+    }
+    /** Show exposes both the global selection and resolved IP. */
+    const shown = spawnSync(process.execPath, [entry, '--hosts-file', f.path, 'show', 'all'], { encoding: 'utf8' });
+    assert.match(shown.stdout, /active=@local ip=127.0.0.1 CLEAN/);
+    await writeFile(f.path, saved.replace('127.0.0.1 example.test', '192.0.2.9 example.test'));
+    /** Global repair offers restore without a keep option that could mutate shared state. */
+    const repaired = await interactive(f, ['repair', 'example.test'], [
+        { prompt: 'Restore configured target', keys: '\r' }
+    ]);
+    assert.equal(repaired.code, 0, repaired.errors);
+    assert.doesNotMatch(repaired.output, /Keep effective IP/);
+    assert.equal(parse(await readFile(f.path, 'utf8')).groups[0].status, 'CLEAN');
+});
 
 test('dry-run and scripted migration expose multi-target state without prompting', async t => {
     /** Purely commented source should import as disabled through the script interface. */

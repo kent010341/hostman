@@ -262,13 +262,8 @@ export function parse(text: string): ParseResult {
         const host = content.match(/^# host (\S+)$/);
         const rule = ruleOf(line);
         if (target) {
-            current.group.targets.push(target[2].startsWith('@') ? {
+            current.group.targets.push({
                 name: target[1],
-                source: 'global',
-                globalName: target[2].slice(1)
-            } : {
-                name: target[1],
-                source: 'group',
                 ip: target[2]
             });
         } else if (host) {
@@ -314,14 +309,22 @@ export function parse(text: string): ParseResult {
     }
     return result;
 }
+/**
+ * Serialize literal destinations and effective mappings for one group.
+ * @param doc Global definitions used to resolve a direct active selection.
+ * @param group Group configuration to serialize.
+ * @param eol Source line separator.
+ * @returns Complete group block with its semantic digest.
+ */
 export function serializeGroup(doc: HostmanDocument, group: Group, eol = '\n'): string {
+    /** Group marker followed by literal targets and hostname rules. */
     const lines = [
         `# >>> group ${group.name} enabled=${group.enabled}`
         + ` active=${group.activeTarget} hash=${groupDigest(group)}`
     ];
     for (const t of [...group.targets].sort((a, b) => a.name.localeCompare(b.name,
         'en'))) {
-        lines.push(`# target ${t.name}=${t.source === 'global' ? `@${t.globalName}` : t.ip}`);
+        lines.push(`# target ${t.name}=${t.ip}`);
     }
     for (const h of [...group.hosts].sort()) {
         lines.push(group.enabled ? `${resolveTarget(doc,
@@ -527,6 +530,9 @@ export function candidates(parsed: ParseResult): Candidate[] {
                 - Number(a.name === group.activeTarget)) : [];
         /** Proposed targets, including reused definitions. */
         const targets = keys.map(key => {
+            if (group?.activeTarget.startsWith('@') && activeIp && ipKey(activeIp) === key) {
+                return { name: group.activeTarget, ip: ips.get(key)!, create: false };
+            }
             /** Existing target resolving to this candidate IP. */
             const existing = reusable.find(t => ipKey(resolveTarget(parsed.document, group!, t.name)) === key);
             /** Name reserved for either a reused target or a new literal target. */

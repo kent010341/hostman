@@ -8,7 +8,7 @@ import {
     HostmanError, ipKey, resolveTarget, sha256, validName, type Group
 } from '#hostman/domain/model';
 import {
-    targetFrom, transform, type MigrationTargetName, type Operation
+    transform, type MigrationTargetName, type Operation
 } from '#hostman/domain/operations';
 import { candidates, importedName, parse } from '#hostman/hosts/document';
 import { formatMigrationCandidate, formatMigrationGroup } from '#hostman/cli/migration';
@@ -31,10 +31,15 @@ type MigrationOptions = {
     /** Preview without prompts or mutations. */
     dryRun?: boolean
 };
+/** Flags defining initial group destinations, selection and hostnames. */
 type GroupOptions = {
+    /** Repeatable name=IP literal destination definitions. */
     target: string[];
+    /** Initial group target name or direct @global selection. */
     active?: string;
+    /** Complete initial hostname list when supplied. */
     host: string[];
+    /** Create definitions without effective mappings. */
     disabled?: boolean
 };
 type RepairStrategy = 'restore' | 'keep';
@@ -147,33 +152,40 @@ async function chooseRenameTarget(value: string | undefined, group?: string): Pr
     }
     return select({ message, choices: targets.map(t => ({ name: t.name, value: t.name })) });
 }
+/**
+ * Obtain a literal IP from arguments or a terminal prompt.
+ * @param value Explicit address, validated by the domain before writing.
+ * @returns Supplied address or selected terminal input.
+ */
 async function address(value?: string): Promise<string> {
     if (value !== undefined) {
         return value;
     }
     if (!interactive) {
-        throw new HostmanError('IP or @global-reference is required.');
+        throw new HostmanError('IP address is required.');
     }
+    /** Unique local interface addresses offered as convenient literal destinations. */
     const detected = [
         ...new Set(
             Object.values(networkInterfaces()).flatMap(entries => entries?.map(x => x.address) ?? [])
         )
     ];
+    /** Empty selection requests manual address entry. */
     const choice = await select({
-        message: 'IP or global reference',
+        message: 'IP address',
         choices: [
             ...detected.map(ip => ({
                 name: ip,
                 value: ip
             })),
             {
-                name: 'Enter an IP or @global-reference',
+                name: 'Enter an IP address',
                 value: ''
             }
         ]
     });
     return choice || text(undefined,
-        'IP or @global-reference');
+        'IP address');
 }
 async function mutate(operation: Operation, snapshot?: Awaited<ReturnType<typeof source>>): Promise<void> {
     const current = snapshot ?? await source(), next = transform(current.text,
@@ -338,7 +350,8 @@ command(program,
         }
         console.log(`${g.name} ${g.enabled ? 'enabled' : 'disabled'} active=${g.activeTarget}`
             + ` ip=${effective} ${entry.status}`);
-        const targets = g.targets.map(t => `${t.name}=${t.source === 'global' ? `@${t.globalName}` : t.ip}`);
+        /** Literal destinations defined within this group. */
+        const targets = g.targets.map(t => `${t.name}=${t.ip}`);
         console.log(`  targets: ${targets.join(', ')}`);
         console.log(`  hosts: ${g.hosts.join(', ')}`);
     }
@@ -356,11 +369,11 @@ command(add,
     'Create a group with explicit initial targets.',
     'add group foo.test --target local=127.0.0.1')
     .option('--target <name=value>',
-        'Initial target IP or @global-reference; repeat to add targets',
+        'Initial target IP; repeat to add targets',
         list,
         [])
     .option('--active <target>',
-        'Active target (default: first initial target)')
+        'Active group target or @global name (default: first initial target)')
     .addOption(new Option('--host <hostname>',
         'Initial hostname, short subdomain, or @; repeat')
         .argParser(list)
@@ -370,25 +383,27 @@ command(add,
     .action(async (name: string | undefined, options: GroupOptions) => {
         const groupName = (await text(name,
             'Two-label group root')).toLowerCase();
+        /** Explicit destinations; a direct global selection needs no group targets. */
         let specs: string[] = options.target;
-        if (!specs.length) {
+        if (!specs.length && !options.active?.startsWith('@')) {
             specs = [
                 `${await text(undefined,
                     'Initial target name',
                     'local')}=${await address()}`
             ];
         }
+        /** Literal targets supplied by flags or the initial destination prompt. */
         const targets = specs.map(spec => {
+            /** Separator between the target name and literal address. */
             const index = spec.indexOf('=');
             if (index < 1) {
-                throw new HostmanError('Use --target name=IP or name=@global.');
+                throw new HostmanError('Use --target name=IP.');
             }
-            return targetFrom(spec.slice(0,
-                index),
-            spec.slice(index + 1));
+            return { name: spec.slice(0, index), ip: spec.slice(index + 1) };
         });
         const { expandHost } = await import('#hostman/domain/operations');
         const hosts = options.host.length ? options.host : ['@'];
+        /** New group retaining either a local destination or direct global selection. */
         const group: Group = {
             name: groupName,
             targets,
@@ -446,20 +461,24 @@ for (const kind of ['enable', 'disable'] as const) {
 }
 command(program,
     'use [group] [target]',
-    'Switch all enabled hostnames in a group to a target.',
+    'Switch all enabled hostnames to a group target or @global target.',
     'use foo.test prod').action(async (name: string | undefined, target: string | undefined) => {
+    /** Group receiving the selected destination. */
     const group = await chooseGroup(name);
     if (!target && interactive) {
-        const g = parse((await source()).text).document.groups.find(g => g.name === group);
+        /** Current definitions supplying group and global choices. */
+        const document = parse((await source()).text).document;
+        /** Selected group whose local destinations appear first. */
+        const g = document.groups.find(g => g.name === group);
         if (!g) {
             throw new HostmanError(`Unknown group ${group}.`);
         }
         target = await select({
             message: 'Target',
-            choices: g.targets.map(t => ({
-                name: t.name,
-                value: t.name
-            }))
+            choices: [
+                ...g.targets.map(t => ({ name: `${t.name} (group, ${t.ip})`, value: t.name })),
+                ...document.globals.map(t => ({ name: `@${t.name} (global, ${t.ip})`, value: `@${t.name}` }))
+            ]
         });
     }
     await mutate({
@@ -469,21 +488,20 @@ command(program,
             'Target')
     });
 });
+/** Command namespace for group-owned literal destinations. */
 const target = command(program,
     'target',
-    'Manage group-owned targets and global references.',
+    'Manage group-owned targets with literal IP addresses.',
     'target add foo.test prod 10.0.0.1');
 for (const action of ['add', 'set'] as const) {
     command(target,
         `${action} [group] [target] [value]`,
-        `${action === 'add' ? 'Add' : 'Set'} a group target using an IP or @global-reference.`,
+        `${action === 'add' ? 'Add' : 'Set'} a group target using a literal IP address.`,
         `target ${action} foo.test prod 10.0.0.1`)
         .action(async (name: string | undefined, targetName: string | undefined, value: string | undefined) => mutate({
             kind: `target-${action}`,
             group: await chooseGroup(name),
-            target: targetFrom(await text(targetName,
-                'Target name'),
-            await address(value))
+            target: { name: await text(targetName, 'Target name'), ip: await address(value) }
         }));
 }
 command(target,
@@ -510,9 +528,10 @@ command(target,
         target: await text(targetName,
             'Target name')
     }));
+/** Command namespace for shared destinations selected directly by groups. */
 const global = command(program,
     'global',
-    'Manage shared targets referenced by groups.',
+    'Manage shared targets selected directly with @name.',
     'global add local 127.0.0.1');
 for (const action of ['add', 'set'] as const) {
     command(global,
@@ -528,7 +547,7 @@ for (const action of ['add', 'set'] as const) {
 }
 command(global,
     'rename [target] [new-name]',
-    'Rename a global target and update every group reference.',
+    'Rename a global target and update every direct group selection.',
     'global rename local shared')
     .action(async (name: string | undefined, newName: string | undefined) => mutate({
         kind: 'global-rename',
@@ -537,7 +556,7 @@ command(global,
     }));
 command(global,
     'remove [target]',
-    'Remove a global target only when no group references it.',
+    'Remove a global target only when no group selects it.',
     'global remove local').action(async (name: string | undefined) => mutate({
     kind: 'global-remove',
     name: await text(name,
@@ -580,9 +599,10 @@ command(program,
                     value: 'restore'
                 }
             ];
+            /** A literal active destination is required before offering keep. */
             const activeTarget = entry.group.targets.find(t => t.name === entry.group.activeTarget);
             const hasSingleIp = new Set(entry.effective.map(r => ipKey(r.ip))).size === 1;
-            if (activeTarget?.source === 'group' && hasSingleIp) {
+            if (activeTarget && hasSingleIp) {
                 choices.push({
                     name: 'Keep effective IP and update group-owned target',
                     value: 'keep'

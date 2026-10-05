@@ -31,7 +31,7 @@ function managed(group, globals = []) {
 function group(enabled = true) {
     return {
         name: 'example.test', enabled, activeTarget: 'lab', hosts: ['www.example.test'],
-        targets: [{ name: 'lab', source: 'group', ip: '10.11.22.33' }]
+        targets: [{ name: 'lab', ip: '10.11.22.33' }]
     };
 }
 
@@ -51,8 +51,8 @@ test('single comment markers import two disabled targets and the hostname union'
     assert.deepEqual(result.document.groups[0], {
         name: 'example.test', enabled: false, activeTarget: 'imported',
         targets: [
-            { name: 'imported', source: 'group', ip: '10.12.34.56' },
-            { name: 'imported-2', source: 'group', ip: '127.0.0.1' }
+            { name: 'imported', ip: '10.12.34.56' },
+            { name: 'imported-2', ip: '127.0.0.1' }
         ],
         hosts: ['iam.example.test', 'www.example.test']
     });
@@ -155,20 +155,39 @@ test('managed conflicts remain blocking even when an outside duplicate could be 
     assert.throws(() => migrate('# >>> hostman v1\n#127.0.0.1 www.example.test\n'), /Unclosed/);
 });
 
-test('global references and active target precedence are preserved when reusing an IP', () => {
-    /** Two existing targets resolve to the same IP, with the active reference taking precedence. */
+test('direct globals and active target precedence are preserved when reusing an IP', () => {
+    /** A group target and its active global share an IP, with the active global taking precedence. */
     const existing = group();
-    existing.targets = [
-        { name: 'literal', source: 'group', ip: '10.11.22.33' },
-        { name: 'lab', source: 'global', globalName: 'shared' }
-    ];
-    /** Candidate identifies the active global reference rather than introducing another target. */
+    existing.targets = [{ name: 'literal', ip: '10.11.22.33' }];
+    existing.activeTarget = '@shared';
+    /** Candidate identifies the active global selection rather than introducing another target. */
     const source = managed(existing, [{ name: 'shared', ip: '10.11.22.33' }])
         + '#10.11.22.33 api.example.test\n';
-    assert.equal(candidates(parse(source))[0].targets[0].name, 'lab');
+    assert.equal(candidates(parse(source))[0].targets[0].name, '@shared');
     assert.deepEqual(migrate(source).document.groups[0].targets,
         [...existing.targets].sort((a, b) => a.name.localeCompare(b.name, 'en')));
 });
+
+for (const enabled of [true, false]) {
+    test(`migration reuses an active IPv6 global with no group targets: enabled=${enabled}`, () => {
+        /** Existing group selects a shared IPv6 address without owning targets. */
+        const existing = { ...group(), enabled, activeTarget: '@shared', targets: [] };
+        /** Equivalent spelling must match the active global semantically. */
+        const source = managed(existing, [{ name: 'shared', ip: '2001:db8::1' }])
+            + `${enabled ? '' : '#'}2001:0db8:0:0:0:0:0:1 api.example.test\n`
+            + '#192.0.2.9 extra.example.test\n';
+        /** Matching global is reused while the other IP becomes a literal target. */
+        const proposal = candidates(parse(source))[0];
+        assert.equal(proposal.targets[0].name, '@shared');
+        assert.equal(proposal.targets[0].create, false);
+        /** Import retains state and adds only the unmatched destination. */
+        const result = migrate(source);
+        assert.equal(result.document.groups[0].activeTarget, '@shared');
+        assert.equal(result.document.groups[0].enabled, enabled);
+        assert.deepEqual(result.document.groups[0].targets, [{ name: 'imported', ip: '192.0.2.9' }]);
+        assert.equal(result.groups[0].status, 'CLEAN');
+    });
+}
 
 test('custom names select the same active IP and defaults avoid existing and accepted names', () => {
     /** Naming an earlier target imported-2 forces the next default to use the available imported name. */
@@ -178,7 +197,7 @@ test('custom names select the same active IP and defaults avoid existing and acc
     assert.equal(result.document.groups[0].activeTarget, 'imported');
     /** Existing imported names must also be reserved even when absent from the candidate IPs. */
     const existing = group();
-    existing.targets.push({ name: 'imported', source: 'group', ip: '192.0.2.9' });
+    existing.targets.push({ name: 'imported', ip: '192.0.2.9' });
     assert.equal(migrate(managed(existing) + '#192.0.2.8 api.example.test\n')
         .document.groups[0].targets.find(t => t.ip === '192.0.2.8').name, 'imported-2');
 });

@@ -8,8 +8,8 @@ function fixture(overrides = {}) {
     const group = {
         name: 'example.com', enabled: true, activeTarget: 'local', hosts: ['example.com'],
         targets: [
-            { name: 'local', source: 'group', ip: '127.0.0.1' },
-            { name: 'lab', source: 'group', ip: '192.0.2.10' }
+            { name: 'local', ip: '127.0.0.1' },
+            { name: 'lab', ip: '192.0.2.10' }
         ], ...overrides
     };
     const text = serialize(parse('127.0.0.1 localhost\n'), { version: 1, groups: [group], globals: [] });
@@ -81,13 +81,13 @@ test('migration, removal, repair and enable suggestions point to resulting state
     }
 });
 
-test('global hints show how to reference the new global and inspect affected groups', () => {
+test('global hints show how to select the new global and inspect affected groups', () => {
     const parsed = fixture();
     assert.deepEqual(operationHints({ kind: 'global-add', name: 'shared', ip: '127.0.0.1' }, parsed)[0].args,
-        ['target', 'add', 'example.com', 'shared', '@shared']);
+        ['use', 'example.com', '@shared']);
     const withGlobal = transform(parsed.text, { kind: 'global-add', name: 'shared', ip: '127.0.0.1' });
     const referenced = parse(transform(withGlobal, {
-        kind: 'target-add', group: 'example.com', target: { name: 'shared', source: 'global', globalName: 'shared' }
+        kind: 'use', group: 'example.com', target: '@shared'
     }));
     assert.deepEqual(operationHints({ kind: 'global-set', name: 'shared', ip: '127.0.0.2' }, referenced)[0].args,
         ['show', 'example.com']);

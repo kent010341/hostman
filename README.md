@@ -107,8 +107,9 @@ hostman target rename example.com local dev
 hostman global rename local shared
 ```
 
-Group target renames update the active selection when needed. Global renames update every `@local` reference,
-including inactive targets and disabled groups. Replacement names must be valid and unused in their scope.
+Group target renames update the active selection when needed. Global renames update every direct `@local`
+selection, including disabled groups, while preserving group-owned targets and all IPs.
+Replacement names must be valid and unused in their scope.
 Renaming a target to its current name makes no changes when its managed state is clean.
 In an interactive terminal, omit the existing target name to select it from a list, then enter its new name.
 
@@ -141,12 +142,21 @@ Disabling removes the group's effective mappings while keeping its hosts and tar
 
 ```sh
 hostman global add local 127.0.0.1
-hostman target add foo.test shared-local @local
-hostman use foo.test shared-local
+hostman use foo.test '@local'
 hostman global set local 192.168.50.21
 ```
 
-Other groups can reference the same `@local` target. Changing its global IP updates every enabled group using it.
+Select a global directly with `@name`; no group target needs to be created first. The Switch target menu also
+lists all global targets with their IPs. Changing a global IP updates every enabled group selecting it.
+`local` selects a group-owned target; `@local` selects the global even when both have the same name.
+
+You can create a group using only a global destination:
+
+```sh
+hostman add group example.com --active '@local' --host '@' --host api
+```
+
+Group targets created with `target add/set` or `--target name=IP` accept literal IPs only.
 
 ### Remove a target or project
 
@@ -157,7 +167,8 @@ hostman remove group foo.test
 ```
 
 Switch away from a target before removing it. Removing a group deletes its managed hosts and target definitions.
-Remove a global with `hostman global remove <name>` after removing every group target that references it.
+Remove a global with `hostman global remove <name>` after switching every group selecting it to another
+destination. Disabled groups also retain their selection and prevent removal.
 
 ### Resolve changes made by hand
 

@@ -123,14 +123,10 @@ test('complete CLI lifecycle, dry-run, and repeated migration',
             'add',
             'local',
             '127.0.0.1');
-        run('target',
-            'add',
-            'foo.test',
-            'local',
-            '@local');
+
         run('use',
             'foo.test',
-            'local');
+            '@local');
         run('add',
             'host',
             'foo.test',
@@ -153,10 +149,6 @@ test('complete CLI lifecycle, dry-run, and repeated migration',
         run('use',
             'foo.test',
             'imported');
-        run('target',
-            'remove',
-            'foo.test',
-            'local');
         run('global',
             'remove',
             'local');
