@@ -54,6 +54,22 @@ export type Operation = {
     kind: 'global-remove';
     name: string;
 } | {
+    /** Rename a target within one group without changing its destination. */
+    kind: 'target-rename';
+    /** Group owning the target. */
+    group: string;
+    /** Existing target name. */
+    target: string;
+    /** Replacement target name, unique within the group. */
+    newName: string;
+} | {
+    /** Rename a shared target and every explicit reference to it. */
+    kind: 'global-rename';
+    /** Existing shared target name. */
+    name: string;
+    /** Replacement name, unique among globals. */
+    newName: string;
+} | {
     kind: 'repair';
     group: string;
     strategy: 'restore' | 'keep';
@@ -78,6 +94,12 @@ export function targetFrom(name: string, value: string): Target {
         ip: value
     };
 }
+/**
+ * Mutate a cloned managed document and validate every affected scope.
+ * @param document Current hosts-derived state, which remains unchanged.
+ * @param operation Replayable mutation; renames preserve destinations and update dependent names.
+ * @returns Updated document and group names requiring serialization.
+ */
 export function applyOperation(document: HostmanDocument, operation: Operation): {
     document: HostmanDocument;
     touched: Set<string>;
@@ -150,6 +172,26 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
             }
             break;
         }
+        case 'target-rename': {
+            /** Owning group, also included in serialization and validation. */
+            const g = group(operation.group);
+            /** Existing definition whose destination and position must survive. */
+            const target = g.targets.find(t => t.name === operation.target);
+            if (!target) {
+                throw new HostmanError('Unknown target.');
+            }
+            if (typeof operation.newName !== 'string' || !validName(operation.newName)) {
+                throw new HostmanError('Invalid target name.');
+            }
+            if (operation.newName !== operation.target && g.targets.some(t => t.name === operation.newName)) {
+                throw new HostmanError('Target already exists.');
+            }
+            target.name = operation.newName;
+            if (g.activeTarget === operation.target) {
+                g.activeTarget = operation.newName;
+            }
+            break;
+        }
         case 'target-remove': {
             const g = group(operation.group);
             if (g.activeTarget === operation.target) {
@@ -182,6 +224,29 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
                 if (g.enabled && g.targets.some(t => t.name === g.activeTarget
                 && t.source === 'global' && t.globalName === operation.name)) {
                     touched.add(g.name);
+                }
+            }
+            break;
+        }
+        case 'global-rename': {
+            /** Shared definition whose IP and position must survive. */
+            const target = doc.globals.find(t => t.name === operation.name);
+            if (!target) {
+                throw new HostmanError('Unknown global target.');
+            }
+            if (typeof operation.newName !== 'string' || !validName(operation.newName)) {
+                throw new HostmanError('Invalid global target name.');
+            }
+            if (operation.newName !== operation.name && doc.globals.some(t => t.name === operation.newName)) {
+                throw new HostmanError('Global target already exists.');
+            }
+            target.name = operation.newName;
+            for (const g of doc.groups) {
+                for (const reference of g.targets) {
+                    if (reference.source === 'global' && reference.globalName === operation.name) {
+                        reference.globalName = operation.newName;
+                        touched.add(g.name);
+                    }
                 }
             }
             break;

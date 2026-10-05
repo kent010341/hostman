@@ -459,6 +459,16 @@ for (const action of ['add', 'set'] as const) {
         }));
 }
 command(target,
+    'rename [group] [target] [new-name]',
+    'Rename a group target, preserving its destination and active selection.',
+    'target rename example.com local dev')
+    .action(async (name: string | undefined, targetName: string | undefined, newName: string | undefined) => mutate({
+        kind: 'target-rename',
+        group: await chooseGroup(name),
+        target: await text(targetName, 'Target name'),
+        newName: await text(newName, 'New target name')
+    }));
+command(target,
     'remove [group] [target]',
     'Remove an inactive group target.',
     'target remove foo.test lab')
@@ -484,6 +494,15 @@ for (const action of ['add', 'set'] as const) {
             ip: await address(ip)
         }));
 }
+command(global,
+    'rename [target] [new-name]',
+    'Rename a global target and update every group reference.',
+    'global rename local shared')
+    .action(async (name: string | undefined, newName: string | undefined) => mutate({
+        kind: 'global-rename',
+        name: await text(name, 'Global target name'),
+        newName: await text(newName, 'New global target name')
+    }));
 command(global,
     'remove [target]',
     'Remove a global target only when no group references it.',
@@ -571,9 +590,11 @@ program.action(async () => {
             ['Remove hostname', 'remove host'],
             ['Add target', 'target add'],
             ['Set target', 'target set'],
+            ['Rename target', 'target rename'],
             ['Remove target', 'target remove'],
             ['Add global target', 'global add'],
             ['Set global target', 'global set'],
+            ['Rename global target', 'global rename'],
             ['Remove global target', 'global remove'],
             ['Repair external changes', 'repair'],
             ['Exit', 'exit']
