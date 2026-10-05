@@ -100,6 +100,19 @@ hostman target set foo.test prod 10.30.0.20
 `target add` defines a destination; `use` selects it. `target set` changes an existing destination's IP.
 If that target is active, all enabled hosts in the group update immediately.
 
+Rename destinations while preserving their IPs and selections:
+
+```sh
+hostman target rename example.com local dev
+hostman global rename local shared
+```
+
+Group target renames update the active selection when needed. Global renames update every direct `@local`
+selection, including disabled groups, while preserving group-owned targets and all IPs.
+Replacement names must be valid and unused in their scope.
+Renaming a target to its current name makes no changes when its managed state is clean.
+In an interactive terminal, omit the existing target name to select it from a list, then enter its new name.
+
 To add a local destination to an imported group:
 
 ```sh

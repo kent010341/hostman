@@ -35,10 +35,12 @@ for (const command of [
     'target',
     'target add',
     'target set',
+    'target rename',
     'target remove',
     'global',
     'global add',
     'global set',
+    'global rename',
     'global remove',
     'repair'
 ]) {

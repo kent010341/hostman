@@ -82,6 +82,18 @@ Changing a global IP updates enabled groups selecting it. Disabled groups retain
 latest IP when enabled. A global selected by any group, including a disabled group, cannot be removed.
 Active group targets cannot be removed; switch to another group or global target first.
 
+`target rename [group] [target] [new-name]` renames a literal target within its group.
+It preserves the destination, enabled state and hostnames, updating the stored active selection
+if it names that target. `global rename [target] [new-name]` renames a shared definition and updates every
+direct `active=@name` selection, including disabled groups, without renaming group-owned targets or changing IPs.
+Both commands appear in the guided menu. Interactive terminals select omitted existing targets from a list
+and prompt for the new name; group renames first select an omitted group. Explicit arguments skip their prompts.
+An empty target list reports an actionable error. Scripts must supply all arguments.
+Names start with a letter or number and contain only letters, numbers,
+underscores or hyphens. Unknown targets, invalid names and names already used in the relevant scope are rejected.
+Renaming to the current name is byte-stable for clean state. Affected conflicts block renames; valid manual
+hostname additions survive and affected group digests are refreshed. Writes use the normal transaction protocol.
+
 When creating a group, repeat `--target name=value` and `--host hostname` as needed. The first initial target
 is active unless `--active <name>` is specified. Omitting `--host` includes the group root hostname by default.
 Explicit `--host` options define the complete initial hostname list; use `@` to include the root.

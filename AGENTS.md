@@ -34,6 +34,7 @@
 | `test/cli.test.mjs` | Command help, lifecycle, temporary-file integration, and simulated TTY behavior |
 | `test/hints.test.mjs` | State-aware suggestions, recovery guidance, and cross-shell argument quoting |
 | `test/storage.test.mjs`, `test/acl.ps1` | Transactions, concurrency, metadata, encoding, and elevation |
+| `test/rename.test.mjs` | Target renaming, active selections, global references, CLI and helper replay |
 
 | Task | Inspect first |
 | --- | --- |
@@ -65,9 +66,11 @@ hostman disable [group]
 hostman use [group] [target]
 hostman target add [group] [target] [value]
 hostman target set [group] [target] [value]
+hostman target rename [group] [target] [new-name]
 hostman target remove [group] [target]
 hostman global add [target] [ip]
 hostman global set [target] [ip]
+hostman global rename [target] [new-name]
 hostman global remove [target]
 hostman repair [group] [--strategy restore | keep]
 ```
@@ -95,6 +98,14 @@ hostman repair [group] [--strategy restore | keep]
   be removed, and globals selected by any group, including disabled groups, cannot be removed.
   Group targets may be empty when the active selection resolves to an existing global. The former group
   reference format is unsupported; there is no compatibility or conversion layer.
+- Group target renames preserve destinations and update the stored active selection when applicable.
+  Global renames update direct active selections, including disabled groups, preserving
+  group-owned targets and all IPs. Both are available in the guided menu and use replayable transactions.
+  In interactive terminals, omitted existing target names are selected from the current scope's list and
+  new names use text input. Group renames select an omitted group first; explicit arguments skip prompts.
+  Empty target lists report actionable errors; scripts require complete arguments.
+  Unknown targets, invalid names and duplicate names within their scope are rejected. Same-name renames of
+  clean state are byte-stable; affected conflicts block renames and valid manual hostname additions survive.
 - Next-step hints appear only when stdin and stdout are terminals and hints are enabled. `--no-hints`
   suppresses them, including from the menu. Scripts omit hints automatically.
 - Suggestions use actual names and resulting state, avoid existing suggested hostname/target names, retain
