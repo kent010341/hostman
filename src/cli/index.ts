@@ -119,6 +119,34 @@ async function chooseGroup(value?: string): Promise<string> {
         }))
     });
 }
+/**
+ * Select an existing rename subject when omitted in an interactive terminal.
+ * @param value Explicit target name, passed through for domain validation.
+ * @param group Owning group, or undefined to select a shared global target.
+ * @returns Existing name chosen from the source, or the explicit script argument.
+ */
+async function chooseRenameTarget(value: string | undefined, group?: string): Promise<string> {
+    /** Prompt label shared by selection and missing script argument errors. */
+    const message = group === undefined ? 'Global target to rename' : 'Target to rename';
+    if (value !== undefined || !interactive) {
+        return text(value, message);
+    }
+    /** Current definitions supply choices without inventing target names. */
+    const document = parse((await source()).text).document;
+    /** Existing owner must be present before presenting a target list. */
+    const owner = group === undefined ? undefined : document.groups.find(g => g.name === group);
+    if (group !== undefined && !owner) {
+        throw new HostmanError(`Unknown group ${group}.`);
+    }
+    /** Only definitions in the selected scope can be renamed. */
+    const targets = group === undefined ? document.globals : owner!.targets;
+    if (!targets.length) {
+        throw new HostmanError(group === undefined
+            ? 'No global targets. Run hostman global add first.'
+            : `No targets in ${group}. Run hostman target add first.`);
+    }
+    return select({ message, choices: targets.map(t => ({ name: t.name, value: t.name })) });
+}
 async function address(value?: string): Promise<string> {
     if (value !== undefined) {
         return value;
@@ -462,12 +490,16 @@ command(target,
     'rename [group] [target] [new-name]',
     'Rename a group target, preserving its destination and active selection.',
     'target rename example.com local dev')
-    .action(async (name: string | undefined, targetName: string | undefined, newName: string | undefined) => mutate({
-        kind: 'target-rename',
-        group: await chooseGroup(name),
-        target: await text(targetName, 'Target name'),
-        newName: await text(newName, 'New target name')
-    }));
+    .action(async (name: string | undefined, targetName: string | undefined, newName: string | undefined) => {
+        /** Resolve the owner before offering its existing targets. */
+        const group = await chooseGroup(name);
+        await mutate({
+            kind: 'target-rename',
+            group,
+            target: await chooseRenameTarget(targetName, group),
+            newName: await text(newName, 'New target name')
+        });
+    });
 command(target,
     'remove [group] [target]',
     'Remove an inactive group target.',
@@ -500,7 +532,7 @@ command(global,
     'global rename local shared')
     .action(async (name: string | undefined, newName: string | undefined) => mutate({
         kind: 'global-rename',
-        name: await text(name, 'Global target name'),
+        name: await chooseRenameTarget(name),
         newName: await text(newName, 'New global target name')
     }));
 command(global,

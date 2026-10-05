@@ -81,8 +81,10 @@ Referenced globals and active group targets cannot be removed.
 It preserves the destination, enabled state and hostnames, updating the stored active selection
 if it names that target. `global rename [target] [new-name]` renames a shared definition and updates every
 reference, including inactive targets and disabled groups, without renaming group-local targets.
-Both commands appear in the guided menu and prompt for missing arguments in interactive terminals;
-scripts must supply all arguments. Names start with a letter or number and contain only letters, numbers,
+Both commands appear in the guided menu. Interactive terminals select omitted existing targets from a list
+and prompt for the new name; group renames first select an omitted group. Explicit arguments skip their prompts.
+An empty target list reports an actionable error. Scripts must supply all arguments.
+Names start with a letter or number and contain only letters, numbers,
 underscores or hyphens. Unknown targets, invalid names and names already used in the relevant scope are rejected.
 Renaming to the current name is byte-stable for clean state. Affected conflicts block renames; valid manual
 hostname additions survive and affected group digests are refreshed. Writes use the normal transaction protocol.

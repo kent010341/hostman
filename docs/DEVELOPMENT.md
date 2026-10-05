@@ -43,8 +43,8 @@ symlinks when run on Unix. No CI workflow is tracked in this checkout; run the c
 before claiming cross-platform validation.
 
 `test/rename.test.mjs` covers group and global target renaming, active selection and reference preservation,
-disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive cancellation and
-compiled helper replay.
+disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive target selection and
+selection/naming cancellation, and compiled helper replay.
 
 On Windows, `npm run smoke:elevation` protects a disposable directory and requests actual UAC elevation.
 Accept the dialog to verify the privileged helper. The script restores permissions and removes the fixture.

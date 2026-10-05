@@ -94,6 +94,9 @@ hostman repair [group] [--strategy restore | keep]
 - Group target renames preserve destinations and update the stored active selection when applicable.
   Global renames update all explicit references, including inactive targets and disabled groups, preserving
   group-local target names and IPs. Both are available in the guided menu and use replayable transactions.
+  In interactive terminals, omitted existing target names are selected from the current scope's list and
+  new names use text input. Group renames select an omitted group first; explicit arguments skip prompts.
+  Empty target lists report actionable errors; scripts require complete arguments.
   Unknown targets, invalid names and duplicate names within their scope are rejected. Same-name renames of
   clean state are byte-stable; affected conflicts block renames and valid manual hostname additions survive.
 - Next-step hints appear only when stdin and stdout are terminals and hints are enabled. `--no-hints`

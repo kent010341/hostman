@@ -110,6 +110,7 @@ hostman global rename local shared
 Group target renames update the active selection when needed. Global renames update every `@local` reference,
 including inactive targets and disabled groups. Replacement names must be valid and unused in their scope.
 Renaming a target to its current name makes no changes when its managed state is clean.
+In an interactive terminal, omit the existing target name to select it from a list, then enter its new name.
 
 To add a local destination to an imported group:
 

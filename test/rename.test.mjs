@@ -125,9 +125,26 @@ test('TTY rename prompts finish before writes and cancellation preserves the sou
     await writeFile(preload,
         "Object.defineProperty(process.stdin, 'isTTY', { value: true });\n"
         + "Object.defineProperty(process.stdout, 'isTTY', { value: true });\n");
-    for (const [args, prompt] of [
-        [['target', 'rename', 'example.com', 'local'], 'New target name'],
-        [['global', 'rename', 'shared'], 'New global target name']
+    for (const [args, steps, operation] of [
+        [['target', 'rename', 'example.com', 'local'],
+            [{ prompt: 'New target name', keys: 'renamed\r' }],
+            { kind: 'target-rename', group: 'example.com', target: 'local', newName: 'renamed' }],
+        [['global', 'rename', 'shared'],
+            [{ prompt: 'New global target name', keys: 'renamed\r' }],
+            { kind: 'global-rename', name: 'shared', newName: 'renamed' }],
+        [['target', 'rename', 'example.com'],
+            [{ prompt: 'Target to rename', keys: '\u001b[B\r' },
+                { prompt: 'New target name', keys: 'renamed\r' }],
+            { kind: 'target-rename', group: 'example.com', target: 'literal', newName: 'renamed' }],
+        [['global', 'rename'],
+            [{ prompt: 'Global target to rename', keys: '\u001b[B\r' },
+                { prompt: 'New global target name', keys: 'renamed\r' }],
+            { kind: 'global-rename', name: 'other', newName: 'renamed' }],
+        [['target', 'rename'],
+            [{ prompt: 'Group', keys: '\r' },
+                { prompt: 'Target to rename', keys: '\u001b[B\r' },
+                { prompt: 'New target name', keys: 'renamed\r' }],
+            { kind: 'target-rename', group: 'example.com', target: 'literal', newName: 'renamed' }]
     ]) {
         for (const cancel of [false, true]) {
             await writeFile(path, fixture());
@@ -142,8 +159,8 @@ test('TTY rename prompts finish before writes and cancellation preserves the sou
                 ]);
                 /** Terminal redraws accumulated for prompt detection. */
                 let output = '';
-                /** Prevent duplicate responses on redraw. */
-                let responded = false;
+                /** Number of prompts already answered, preventing duplicate redraw responses. */
+                let answered = 0;
                 /** Abort regressions that would otherwise leave the test hanging. */
                 const timer = setTimeout(() => {
                     child.kill();
@@ -151,11 +168,12 @@ test('TTY rename prompts finish before writes and cancellation preserves the sou
                 }, 10000);
                 child.stdout.on('data', async value => {
                     output += value.toString();
-                    if (!responded && output.includes(prompt)) {
-                        responded = true;
+                    if (answered < steps.length && output.includes(steps[answered].prompt)) {
+                        /** Capture this response before asynchronous source checks. */
+                        const step = steps[answered++];
                         try {
                             assert.equal(await readFile(path, 'utf8'), before);
-                            child.stdin.write(cancel ? '\u0003' : 'renamed\r');
+                            child.stdin.write(cancel ? '\u0003' : step.keys);
                         } catch (error) {
                             child.kill();
                             reject(error);
@@ -168,18 +186,34 @@ test('TTY rename prompts finish before writes and cancellation preserves the sou
                 });
                 child.on('close', code => {
                     clearTimeout(timer);
-                    resolveResult({ code, responded });
+                    resolveResult({ code, answered });
                 });
             });
-            assert.equal(result.responded, true);
+            assert.equal(result.answered, cancel ? 1 : steps.length);
             assert.equal(result.code, cancel ? 1 : 0);
             if (cancel) {
                 assert.equal(await readFile(path, 'utf8'), before);
             } else {
-                assert.ok((await readFile(path, 'utf8')).includes('renamed'));
+                assert.equal(await readFile(path, 'utf8'), transform(before, operation));
                 assert.ok(parse(await readFile(path, 'utf8')).groups.every(g => g.status === 'CLEAN'));
             }
         }
+    }
+    /** Initialized empty source has no selectable globals or groups. */
+    const empty = transform('127.0.0.1 localhost\n', { kind: 'init' });
+    await writeFile(path, empty);
+    for (const [args, message] of [
+        [['global', 'rename'], /No global targets.*global add/],
+        [['target', 'rename', 'missing.example'], /Unknown group missing.example/]
+    ]) {
+        /** Empty choices and missing owners fail before any naming prompt. */
+        const result = spawnSync(process.execPath, [
+            '--import', pathToFileURL(preload).href, resolve('dist/cli/index.js'),
+            '--no-hints', '--hosts-file', path, ...args
+        ], { encoding: 'utf8', timeout: 10000 });
+        assert.equal(result.status, 1, result.stderr);
+        assert.match(result.stderr, message);
+        assert.equal(await readFile(path, 'utf8'), empty);
     }
 });
 
