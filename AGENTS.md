@@ -1,0 +1,202 @@
+# Hostman contributor guide
+
+## Start here
+
+- Read this file before changing the project. Use the task map below to inspect relevant code and tests;
+  do not read the entire repository by default. Verify affected behavior against the implementation.
+- Follow applicable user and global instructions. This guide adds project context and does not weaken them.
+- Hostman is a hosts-native CLI for grouping hostnames and switching their shared destination targets.
+- Runtime: Node.js 24 or newer. Implementation: strict TypeScript, NodeNext ESM, Commander, and Inquirer.
+- The selected hosts file is the sole source of truth. Managed state is reconstructed from its markers;
+  there is no database, cloud state, or optional cache implementation.
+- User documentation is [README.md](README.md). Detailed behavior is in
+  [docs/REFERENCE.md](docs/REFERENCE.md); build and storage notes are in
+  [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Architecture and task map
+
+| Module | Responsibility |
+| --- | --- |
+| `src/cli/index.ts` | Command tree, global options, prompts, menu, previews, and orchestration |
+| `src/cli/hints.ts` | Pure contextual suggestions, related help, failure guidance, and shell quoting |
+| `src/domain/model.ts` | Targets, groups, documents, validation, IP comparison, and semantic digests |
+| `src/domain/operations.ts` | Operation union, pure domain mutations, and validated text transformation |
+| `src/hosts/document.ts` | Marker parsing, source spans, serialization, migration candidates and removal |
+| `src/fs/storage.ts` | Source selection, decoding, locking, replacement, elevation, and helper protocol |
+| `src/fs/helper.ts` | Non-interactive privileged commit entry point |
+| `src/fs/windows.ps1` | Windows replacement, administrator checks, and UAC launch support |
+| `scripts/copy-helpers.mjs` | Copy the PowerShell helper into compiled output |
+| `scripts/package-smoke.mjs` | Packed and linked installation checks using temporary prefixes |
+| `scripts/elevation-smoke.mjs`, `scripts/protected-fixture.ps1` | Disposable protected-fixture UAC check |
+| `test/domain.test.mjs`, `test/fixtures/` | Parsing, digests, domain rules, migration, and repair |
+| `test/cli.test.mjs` | Command help, lifecycle, temporary-file integration, and simulated TTY behavior |
+| `test/hints.test.mjs` | State-aware suggestions, recovery guidance, and cross-shell argument quoting |
+| `test/storage.test.mjs`, `test/acl.ps1` | Transactions, concurrency, metadata, encoding, and elevation |
+
+| Task | Inspect first |
+| --- | --- |
+| Add or change a command | CLI entry, Operation union, affected domain operation, CLI/domain tests |
+| Change next-step suggestions | Hints module, CLI integration, hints/CLI tests |
+| Change group or target behavior | Domain model and operations, parser representation, domain tests |
+| Change markers or migration | Hosts document module, transform, domain fixtures/tests |
+| Change writes or permissions | Storage, helper entries, PowerShell implementation, storage tests |
+| Change build or installation | Package/TS config, helper-copy and package-smoke scripts, developer docs |
+
+Normal mutation flow: parse arguments and finish prompts/selections, read the resolved source, compute a
+validated transformation, commit with digest checks, then report the result and optional suggestions.
+Only the commit helper is elevated. It replays the same domain operation without prompting.
+Keep domain transformations independent of prompts and filesystem APIs. Keep suggestions free of I/O.
+
+## Current CLI behavior
+
+```text
+hostman
+hostman init
+hostman migrate [--group <group> ... | --all] [--dry-run]
+hostman show [active | all | <group>]
+hostman add group [group] [--target <name=value> ...] [--active <target>] [--host <hostname> ...] [--disabled]
+hostman add host [group] [hostname]
+hostman remove group [group]
+hostman remove host [group] [hostname]
+hostman enable [group]
+hostman disable [group]
+hostman use [group] [target]
+hostman target add [group] [target] [value]
+hostman target set [group] [target] [value]
+hostman target remove [group] [target]
+hostman global add [target] [ip]
+hostman global set [target] [ip]
+hostman global remove [target]
+hostman repair [group] [--strategy restore | keep]
+```
+
+- Global options: `--hosts-file <path>`, `--no-elevate`, `--no-hints`, `-h`/`--help`, and `-V`/`--version`.
+- Running without a command opens a menu when stdin and stdout are terminals; otherwise it shows help.
+  Missing inputs prompt only in an interactive terminal; scripts must supply complete arguments.
+- Root, parent, and leaf help must work without accessing hosts, prompting, elevating, or writing.
+  Command help includes related examples independently of runtime suggestion settings.
+- `init` creates an empty outer managed section. Repeated valid initialization makes no byte changes.
+  It preserves valid manual edits, imports nothing, and creates no global target. Conflicts are rejected.
+- Other mutations require initialization, but `migrate` can create the section during an actual import.
+- Creating a group defaults its active target to the first initial target. Without `--host`, it includes
+  the group root. Explicit `--host` options are the complete initial list; `@` means root and `api` expands
+  to `api.<group>`. Empty groups remain representable after removing their last hostname.
+- Each group has an enabled flag, active target, targets, and owned hostnames. Enabled hostnames share the
+  resolved active IP. Disabled groups keep their definitions but have no effective mappings.
+- A group target is a literal IP or an explicit `@global-name` reference. Names do not imply environments.
+  Global IP changes propagate to enabled groups actively referencing them. An active group target cannot
+  be removed, and referenced global targets cannot be removed.
+- Next-step hints appear only when stdin and stdout are terminals and hints are enabled. `--no-hints`
+  suppresses them, including from the menu. Scripts omit hints automatically.
+- Suggestions use actual names and resulting state, avoid existing suggested hostname/target names, retain
+  the resolved custom source path, and quote arguments for PowerShell or Unix shells. Disabled groups need
+  enabling; healthy nonempty `show` results need no hints. Failures suggest recovery without reporting success.
+
+## Hosts format and domain invariants
+
+- One `# >>> hostman v1` / `# <<< hostman` pair surrounds global definitions and group blocks.
+  Group markers contain the name, enabled flag, active target, and an eight-character semantic SHA-256 hash.
+  Targets and disabled hostnames use comments; enabled mappings use ordinary hosts rules.
+- Preserve marker grammar and digest semantics. Target/hostname order does not affect the semantic hash.
+  Full-file SHA-256 checks used for transactions are separate from the group hash.
+- `CLEAN`: configured state, effective rules, and digest agree. `DIRTY`: valid manual changes or a stale
+  digest; valid manual hostname additions survive a touched mutation. `CONFLICT`: invalid or ambiguous state.
+- Hostnames must belong to their group and have unique ownership. Managed hostnames cannot also appear in
+  unmanaged effective rules. Compare IPs semantically, including equivalent IPv6 representations.
+- Structural document conflicts block mutations. Group-scoped conflicts block affected mutations;
+  unaffected valid groups remain inspectable. Never bypass validation through elevation or serialization.
+- Repair `restore` regenerates configured rules. `keep` adopts one unambiguous effective IP into a
+  group-owned active target; it cannot silently update a global or invent targets. Structural damage needs
+  manual correction. Inspect available repair strategies rather than silently choosing one.
+- Migration rescans current unmanaged effective rules on every run. Grouping uses the final two labels,
+  not the Public Suffix List. Comments, disabled rules, single-label/IP-like names, and localhost aliases
+  remain unmanaged.
+- Without selection flags, migration previews, selects, and confirms. Repeatable `--group` and `--all`
+  are mutually exclusive. Dry runs do not prompt, write, or elevate. No eligible imports means no changes.
+- New single-IP groups become enabled with an active group-owned `imported` target. Matching enabled
+  existing groups gain hosts without changing targets. Mixed/mismatched IPs, disabled/conflicted groups,
+  duplicate hostnames, and ambiguous ownership are skipped. Migration never switches targets or enables groups.
+- Selected aliases are removed from unmanaged lines and inserted into management in one transaction.
+  Preserve unselected aliases, their IP and comments; retain a comment separately when all aliases move.
+  Repeated imports without new eligible rules are byte-stable.
+- V1 excludes Public Suffix List grouping, per-host IP overrides, full-screen TUI, automatic environment
+  inference, cloud state, and silent adoption of unmanaged rules. Do not assume these features exist.
+
+## Source selection, preservation, and privileges
+
+- An explicit source path resolves against the original working directory. Defaults are `/etc/hosts` on
+  Unix and `SystemRoot/System32/drivers/etc/hosts` on Windows. Missing Windows `SystemRoot` requires an
+  actionable `--hosts-file` error. Resolve symlink destinations and preserve the symlink itself.
+- Accept ASCII/UTF-8 with optional BOM. Reject unsupported encodings and embedded NUL before mutation.
+  Preserve unmanaged content, existing line endings, BOM presence, and untouched managed blocks.
+  Appending to a source without a final newline inserts the required separator.
+- Attempt current-permission writes first. Read-only commands, help, dry runs, no-ops, and writable custom
+  sources never request elevation. Interactive permission failures may elevate unless `--no-elevate` is set.
+  Non-interactive or already-elevated failures report the problem without another elevation attempt.
+- Windows uses PowerShell/UAC; Unix uses sudo with terminal authentication. Use absolute executable paths,
+  pass data as arguments, keep helper windows hidden, and never store credentials or retry indefinitely.
+- The versioned request includes the resolved source path, expected source SHA-256, complete operation,
+  and expected result SHA-256. Verify its separate request hash and structured helper result. The helper
+  must validate, lock, reread, replay, and verify before committing; never resolve the source under a new account.
+- Serialize writers with a sibling `.hostman.lock`. Prepare and flush a same-directory temporary file,
+  recheck the source immediately before replacement, and preserve Unix mode/ownership. Windows uses .NET
+  `File.Replace` with metadata errors enforced to preserve destination attributes/ACLs. Never truncate live hosts.
+- Clean temporary request/result/write files after completion or failure. Remove a stale lock only after
+  verifying no writer is running. External editors do not honor the lock; digest checks are not an atomic
+  compare-and-swap guarantee. Document this limitation rather than promising protection against all races.
+
+## Coding and documentation rules
+
+- Use English for comments, JSDoc, CLI messages/help, README, and developer documentation.
+- Use four-space indentation, a 120-character line limit, single quotes, semicolons, no trailing spaces,
+  and a final newline. Control flow uses multiline 1TBS braces; one statement per line; indent switch cases.
+- Keep TypeScript strict and type-aware lint. Explicit `any` is forbidden; validate and narrow `unknown`.
+  Use Node globals for this Node CLI, not for any future browser code.
+- Apply global symbol-documentation rules to newly introduced or modified symbols: JSDoc for types and
+  members, functions/methods, and variables including local/destructured declarations. Document parameters
+  and non-void returns. Loop variables and callback parameters are exempt; `//` cannot replace required JSDoc.
+- Internal static imports, re-exports, and dynamic imports must use a project alias. Third-party imports
+  keep package names; resource paths are separate. If absent, establish an appropriate project alias and
+  matching compiler/build/test/runtime resolution before adding or changing internal imports. Confirm names
+  if multiple candidates or conflicts exist; do not add aliases that only TypeScript can resolve.
+- Current gaps: there is no configured internal alias; existing imports are relative, and many symbols
+  lack required JSDoc. Existing ESLint covers core formatting/type safety but not every global convention.
+  Do not describe these requirements as already implemented or backfill the whole project incidentally.
+- Keep README focused on installation, getting started, and use cases first. Put deeper internals in the
+  developer/reference documents. New creation examples use `example.com` and explicitly include `--host`.
+
+## Validation and delivery
+
+- Install with `npm ci`. Build with `npm run build`; this runs TypeScript and copies packaged helpers.
+  The executable entry is `dist/cli/index.js`. Rebuild after TypeScript changes for linked installations.
+- Prefer `npm run lint:fix` first, then fix remaining issues manually. Run `npm run lint` to verify.
+- `npm test` builds and runs `test/*.test.mjs` through Node's test runner. Choose meaningful regression
+  coverage for changed behavior; run the full suite for feature/domain/storage changes.
+- `npm run smoke:package` checks packed and linked installations, command shims, and helper availability
+  in temporary prefixes. Run it for installation, helper packaging, or module-resolution changes.
+- Tests must use temporary hosts fixtures and injected elevation launchers, never the real system hosts.
+  Simulated TTY tests do not prove actual UAC or sudo authentication.
+- For permission changes, validate actual elevation separately against disposable protected fixtures when
+  the platform is available. `npm run smoke:elevation` is the Windows UAC check from an unelevated terminal.
+  Report unavailable Unix sudo, symlink, or metadata checks; do not claim cross-platform validation from one OS.
+- Current gap: developer documentation describes multi-platform CI, but no workflow is tracked in this
+  checkout. Verify actual automation before relying on it; do not report nonexistent CI as passing.
+- For documentation-only changes, verify source facts, paths/links, commands, and `git diff --check`;
+  do not run the entire functional suite merely to change prose.
+- Do not commit on master without explicit user authorization. Otherwise create `codex/<task-name>` first.
+  Stage only this task's changes, inspect staged diff, commit after required checks pass, and verify the
+  commit and remaining worktree state. Follow issue-prefix rules when an issue was specified. Do not push
+  automatically. Report any externally blocked verification rather than presenting it as completed.
+
+## Mandatory final-stage synchronization
+
+- After any functional change and its required validation, review and update this project AGENTS.md in the
+  final wrap-up stage, before committing. It must describe the final implementation, not the original proposal.
+- Review commands/options, domain rules, file format, architecture, privileges/transactions, installation,
+  and validation guidance. Update related README/reference/developer documentation in the same delivery.
+- If implementation changes again after documentation review, repeat the synchronization before committing.
+  Replace or remove stale statements instead of only appending new material.
+- If existing guidance already describes the change correctly, avoid a meaningless edit and explicitly
+  report that AGENTS.md was checked and required no update.
+- Keep this guide durable: do not record transient branch names, commit IDs, fixed test counts, or individual
+  machine verification results as permanent project state. Keep module/task navigation accurate as code moves.
