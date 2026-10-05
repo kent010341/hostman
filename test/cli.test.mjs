@@ -7,8 +7,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from '../dist/hosts/document.js';
-import { quoteArgument } from '../dist/cli/hints.js';
+import { parse } from '#hostman/hosts/document';
+import { quoteArgument } from '#hostman/cli/hints';
 const entry = resolve('dist/cli/index.js');
 function cli(args, env = process.env) {
     return spawnSync(process.execPath,

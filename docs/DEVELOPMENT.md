@@ -11,6 +11,15 @@ npm link
 Rebuild after editing TypeScript when using a linked installation. Installation permissions depend on your
 npm global prefix and are separate from permission to edit system hosts.
 
+Internal imports use the native Node package alias `#hostman/*`. The `package.json` imports map resolves
+TypeScript types to `src/*.ts` and Node execution to `dist/*.js`, including tests and the commit helper.
+NodeNext resolves the same map during compilation; no runtime loader or separate test alias is required.
+The packaged CLI only needs the compiled files for runtime resolution.
+
+Migration presentation lives in the pure `src/cli/migration.ts` formatter. Candidate skip reasons and source
+occurrences remain separate structured data; domain and helper errors independently include source diagnostics.
+Preview formatting combines same-line aliases and separates rejected proposals from hypothetical resulting state.
+
 ## Code quality and tests
 
 ```sh
@@ -27,9 +36,11 @@ Generated output and dependencies are excluded. Long expressions and external-da
 manual fixes after automatic formatting; use `unknown` and validate external data.
 
 Tests use temporary fixtures, never the machine's real hosts file. They cover parser stability, conflicts,
-migration, CLI help/lifecycle, transaction failures, request tampering, and injected elevation. Windows tests
-perform real file replacement and ACL checks. Unix tests cover mode/ownership and symlinks. CI runs lint,
-tests, and package smoke checks on Windows, Ubuntu, and macOS.
+migration, CLI help/lifecycle, transaction failures, request tampering, and injected elevation. Migration tests
+include real Inquirer input driven through simulated TTY pipes, cancellation, custom target names and compiled
+helper replay. Windows tests perform real file replacement and ACL checks. Unix tests cover mode/ownership and
+symlinks when run on Unix. No CI workflow is tracked in this checkout; run the checks on each target platform
+before claiming cross-platform validation.
 
 On Windows, `npm run smoke:elevation` protects a disposable directory and requests actual UAC elevation.
 Accept the dialog to verify the privileged helper. The script restores permissions and removes the fixture.
@@ -66,10 +77,13 @@ Mounted or restricted filesystems may reject replacement; no in-place truncation
 
 ## Privileged helper
 
-Selections complete in the original process. Only the commit helper is elevated, using Windows UAC or Unix
+Selections and new migration target naming complete in the original process. Only the commit helper is elevated,
+using Windows UAC or Unix
 `sudo`. Its versioned request includes the resolved path, source digest, fully specified operation, and result
 digest. The helper validates the request hash, rereads the source, reapplies the domain operation, and verifies
-the expected output before committing. A change while authentication is pending cancels the commit.
+the expected output before committing. Migration operations may include target naming overrides by group and IP;
+the helper recalculates proposals and validates these names without prompting. A change while authentication is
+pending cancels the commit.
 
 The original process checks the structured response and resulting file before reporting success. Request
 and result files are removed afterward. Cancellation, denied authentication, and missing tools stop the

@@ -9,8 +9,9 @@ import rules or create a global `local` target. Conflicting managed documents re
 In an interactive terminal, `init` suggests commands to import existing rules, create a mapping, or open the guided
 menu. Repeated runs also provide suggestions. Suggested commands retain the custom `--hosts-file` path.
 
-`migrate` scans current unmanaged effective rules on every run. Without selection flags it previews candidates,
-collects selections, and confirms the move. A missing managed section is created only during an actual import.
+`migrate` scans current unmanaged effective and commented rules on every run. Without selection flags it previews
+candidates, collects selections and target names, shows a final summary, and confirms the move. A missing managed
+section is created only during an actual import.
 No eligible rules means no changes.
 
 ```sh
@@ -27,18 +28,45 @@ v1; `example.co.uk` groups under `co.uk`.
 
 | Candidate | Result |
 | --- | --- |
-| New group, one IP | Enabled group with active group-owned target `imported` |
-| Existing enabled group, matching active IP | Add hosts; retain targets |
-| Multiple IPs or mismatched active IP | Skip the whole candidate group |
-| Disabled or conflicted group | Skip |
-| Duplicate hostname or existing ownership | Skip |
+| New group, one effective IP | Import every distinct IP target; enable and select the effective IP |
+| New group, only commented rules | Import every distinct IP target; keep the group disabled |
+| Existing enabled group, matching effective IP or commented-only input | Merge hosts and missing targets; retain state |
+| Existing disabled group, commented-only input | Merge hosts and missing targets; remain disabled |
+| Multiple effective IPs, mismatched active IP, or effective input for a disabled group | Skip the whole group |
+| Managed structural/effective conflicts or ownership by another group | Skip |
+| Repeated aliases, including compatible aliases already owned by this group | Deduplicate and absorb outside rules |
 
-Skip reasons appear in the preview. Comments, disabled rules, single-label names, IP-like names, and standard
-localhost aliases stay unmanaged. IPv6 comparison is semantic. Migration does not switch targets or change
-existing target IPs.
+After optional indentation or a BOM, remove exactly one leading `#` to recognize a commented hosts rule.
+`#127.0.0.1 my.dev`, `# 127.0.0.1 my.dev`, and `#       127.0.0.1 my.dev` qualify; `## 127.0.0.1 my.dev`
+does not. Ordinary comments, single-label names, IP-like names, and standard localhost aliases stay unmanaged.
+Commented rules do not count as effective mappings or unmanaged hostname collisions. IPv6 comparison is semantic.
 
-Selected hostname tokens move into management in one transaction. Unselected aliases retain their IP and
-comments. If every alias on a line is imported, its inline comment remains separately.
+Each candidate contains the hostname union and one target per semantic IP, even when each IP originally had
+different aliases. All enabled aliases use the selected active IP; migration does not preserve per-host IPs.
+New target defaults follow IP first occurrence: `imported`, `imported-2`, and so on, avoiding occupied names.
+In every interactive import, including `--all` and `--group`, each newly created target has a naming prompt.
+Press Enter to accept the default. Scripts and dry runs use default names without prompting. Names must be
+unique in the group and start with a letter or number, followed by letters, numbers, underscores or hyphens.
+Renaming an earlier target can change the next available default. Final summaries show the accepted names.
+
+Disabled new groups retain the first imported target as their selection for a later `enable`. Migration previews
+and summaries show `active: none (disabled)` and `enable selects: <target>`; `show` reports the stored active
+selection and its IP together with the disabled flag. There are no effective mappings while disabled.
+
+Existing groups retain enabled state, active selection, target names, IPs and global references. Matching IPs
+reuse the active target first, then the first matching existing target; new IPs become literal group targets.
+Compatible outside duplicates owned by the same group can be absorbed without bypassing other validation.
+Skip diagnostics identify source line numbers, aliases, outside IPs and the managed active IP or disabled state.
+Edit conflicting outside rules before retrying; `repair` is for damaged managed blocks, not outside rules.
+
+Every preview group occupies its own multi-line READY or SKIP block, separated by a blank line. READY blocks
+and final summaries list targets and hostnames on separate lines, followed by active state. SKIP blocks show
+the reason first, then the original source rules in line-number order with each line's aliases combined, and
+a suggested action. They omit proposed target names, active state and enable selection because no import
+will take place for that group. Formatting is the same in interactive terminals, dry runs and scripts.
+
+Selected hostname tokens move into management in one transaction. Unselected aliases retain their IP, spacing,
+comment prefix and inline comments. If every alias on a line is imported, its inline comment remains separately.
 
 ## Groups and targets
 
