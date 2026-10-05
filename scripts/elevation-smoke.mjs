@@ -8,9 +8,9 @@ import {
 import assert from 'node:assert/strict';
 import {
     execute, readSource, run
-} from '../dist/fs/storage.js';
-import { transform } from '../dist/domain/operations.js';
-import { sha256 } from '../dist/domain/model.js';
+} from '#hostman/fs/storage';
+import { transform } from '#hostman/domain/operations';
+import { sha256 } from '#hostman/domain/model';
 if (process.platform !== 'win32') {
     throw new Error('This manual UAC check requires Windows.');
 }

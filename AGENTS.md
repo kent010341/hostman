@@ -29,6 +29,7 @@
 | `scripts/package-smoke.mjs` | Packed and linked installation checks using temporary prefixes |
 | `scripts/elevation-smoke.mjs`, `scripts/protected-fixture.ps1` | Disposable protected-fixture UAC check |
 | `test/domain.test.mjs`, `test/fixtures/` | Parsing, digests, domain rules, migration, and repair |
+| `test/migration.test.mjs`, `test/migration-cli.test.mjs` | Commented/multi-target imports and interactive naming |
 | `test/cli.test.mjs` | Command help, lifecycle, temporary-file integration, and simulated TTY behavior |
 | `test/hints.test.mjs` | State-aware suggestions, recovery guidance, and cross-shell argument quoting |
 | `test/storage.test.mjs`, `test/acl.ps1` | Transactions, concurrency, metadata, encoding, and elevation |
@@ -108,16 +109,30 @@ hostman repair [group] [--strategy restore | keep]
 - Repair `restore` regenerates configured rules. `keep` adopts one unambiguous effective IP into a
   group-owned active target; it cannot silently update a global or invent targets. Structural damage needs
   manual correction. Inspect available repair strategies rather than silently choosing one.
-- Migration rescans current unmanaged effective rules on every run. Grouping uses the final two labels,
-  not the Public Suffix List. Comments, disabled rules, single-label/IP-like names, and localhost aliases
-  remain unmanaged.
+- Migration rescans current unmanaged effective and commented rules on every run. After indentation or a
+  BOM, removing exactly one leading `#` must produce a hosts rule; adjacent or spaced IPs qualify, double
+  comment markers do not. Ordinary comments, single-label/IP-like names, and localhost aliases remain
+  unmanaged. Grouping uses the final two labels, not the Public Suffix List. Commented migration rules
+  stay separate from effective rules and unmanaged collision validation.
 - Without selection flags, migration previews, selects, and confirms. Repeatable `--group` and `--all`
   are mutually exclusive. Dry runs do not prompt, write, or elevate. No eligible imports means no changes.
-- New single-IP groups become enabled with an active group-owned `imported` target. Matching enabled
-  existing groups gain hosts without changing targets. Mixed/mismatched IPs, disabled/conflicted groups,
-  duplicate hostnames, and ambiguous ownership are skipped. Migration never switches targets or enables groups.
+- New groups import one literal target per semantic IP and the hostname union, deduplicating repeated aliases.
+  One effective IP enables the group and selects its target; multiple effective IPs skip the whole group.
+  Commented-only groups start disabled with the first target retained for a later enable. Previews and
+  summaries report `active: none (disabled)` and the stored enable selection; `show` retains its existing
+  disabled flag and stored active target display. Names default to available `imported`, `imported-2`, etc.
+- Every interactive import, including `--all` and `--group`, prompts for each new target name with a default.
+  Scripts and dry runs use deterministic defaults. Existing names and accepted names remain reserved within
+  the group. Prompting finishes before summary, confirmation when required, and any write or elevation.
+- Compatible existing groups merge hosts and missing targets without changing enabled state, active target,
+  existing definitions or global references. Matching IPs reuse the active target first, then the first
+  matching existing target. Enabled groups require matching effective input; disabled groups only accept
+  commented input. Same-group outside duplicates can be absorbed, resolving only their unmanaged hostname
+  conflicts. Other managed conflicts and cross-group ownership remain blocking. Skip details identify source
+  lines, hosts, outside IPs and managed active IP or disabled state; repair does not remove outside rules.
 - Selected aliases are removed from unmanaged lines and inserted into management in one transaction.
-  Preserve unselected aliases, their IP and comments; retain a comment separately when all aliases move.
+  Preserve unselected aliases, their IP, spacing, comment prefix and inline comments; retain an inline comment
+  separately when all aliases move.
   Repeated imports without new eligible rules are byte-stable.
 - V1 excludes Public Suffix List grouping, per-host IP overrides, full-screen TUI, automatic environment
   inference, cloud state, and silent adoption of unmanaged rules. Do not assume these features exist.
@@ -138,6 +153,8 @@ hostman repair [group] [--strategy restore | keep]
 - The versioned request includes the resolved source path, expected source SHA-256, complete operation,
   and expected result SHA-256. Verify its separate request hash and structured helper result. The helper
   must validate, lock, reread, replay, and verify before committing; never resolve the source under a new account.
+  Migration operations may include target naming overrides by group and semantic IP; replay recomputes
+  candidates and validates names without prompting or trusting caller-supplied source state.
 - Serialize writers with a sibling `.hostman.lock`. Prepare and flush a same-directory temporary file,
   recheck the source immediately before replacement, and preserve Unix mode/ownership. Windows uses .NET
   `File.Replace` with metadata errors enforced to preserve destination attributes/ACLs. Never truncate live hosts.
@@ -159,9 +176,10 @@ hostman repair [group] [--strategy restore | keep]
   keep package names; resource paths are separate. If absent, establish an appropriate project alias and
   matching compiler/build/test/runtime resolution before adding or changing internal imports. Confirm names
   if multiple candidates or conflicts exist; do not add aliases that only TypeScript can resolve.
-- Current gaps: there is no configured internal alias; existing imports are relative, and many symbols
-  lack required JSDoc. Existing ESLint covers core formatting/type safety but not every global convention.
-  Do not describe these requirements as already implemented or backfill the whole project incidentally.
+- Internal code imports use native Node package imports `#hostman/*`, with source type resolution and compiled
+  runtime resolution configured in package.json. NodeNext, tests, packaged code and the helper share this map.
+  Existing untouched symbols may still lack required JSDoc. ESLint covers core formatting/type safety but not
+  every global convention; do not backfill the whole project incidentally.
 - Keep README focused on installation, getting started, and use cases first. Put deeper internals in the
   developer/reference documents. New creation examples use `example.com` and explicitly include `--host`.
 
@@ -175,12 +193,14 @@ hostman repair [group] [--strategy restore | keep]
 - `npm run smoke:package` checks packed and linked installations, command shims, and helper availability
   in temporary prefixes. Run it for installation, helper packaging, or module-resolution changes.
 - Tests must use temporary hosts fixtures and injected elevation launchers, never the real system hosts.
-  Simulated TTY tests do not prove actual UAC or sudo authentication.
+  Simulated TTY tests exercise real Inquirer inputs, target naming, cancellation and final confirmation.
+  Compiled helper tests verify custom-name replay and invalid-name rejection. They do not prove actual UAC
+  or sudo authentication. User-facing manual fixtures and cleanup are in docs/MIGRATION-TESTING.md.
 - For permission changes, validate actual elevation separately against disposable protected fixtures when
   the platform is available. `npm run smoke:elevation` is the Windows UAC check from an unelevated terminal.
   Report unavailable Unix sudo, symlink, or metadata checks; do not claim cross-platform validation from one OS.
-- Current gap: developer documentation describes multi-platform CI, but no workflow is tracked in this
-  checkout. Verify actual automation before relying on it; do not report nonexistent CI as passing.
+- No CI workflow is tracked in this checkout. Verify actual automation before relying on it; do not report
+  nonexistent CI as passing or infer cross-platform validation from tests on one platform.
 - For documentation-only changes, verify source facts, paths/links, commands, and `git diff --check`;
   do not run the entire functional suite merely to change prose.
 - Do not commit on master without explicit user authorization. Otherwise create `codex/<task-name>` first.

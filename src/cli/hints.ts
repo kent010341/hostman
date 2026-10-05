@@ -1,5 +1,5 @@
-import type { Operation } from '../domain/operations.js';
-import type { ParseResult } from '../hosts/document.js';
+import type { Operation } from '#hostman/domain/operations';
+import type { ParseResult } from '#hostman/hosts/document';
 
 export type Hint = { description: string; args: string[]; additional?: string[][] };
 const hint = (description: string, ...args: string[]): Hint => ({ description, args });

@@ -5,11 +5,12 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { sha256 } from '../dist/domain/model.js';
-import { transform } from '../dist/domain/operations.js';
+import { sha256 } from '#hostman/domain/model';
+import { transform } from '#hostman/domain/operations';
+import { parse } from '#hostman/hosts/document';
 import {
     sourcePath, readSource, commit, execute, helper, decode, run
-} from '../dist/fs/storage.js';
+} from '#hostman/fs/storage';
 async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(),
         'hostman-test-'));
@@ -38,6 +39,63 @@ async function fixture(t) {
         request
     };
 }
+
+test('compiled commit helper replays migration names and verifies the approved digest', async t => {
+    /** Disposable source and directory shared with the existing transaction fixtures. */
+    const f = await fixture(t);
+    await writeFile(f.path, '#192.0.2.1 www.example.test\n127.0.0.1 api.example.test\n');
+    /** Fresh source digest after preparing the migration input. */
+    const source = await readSource(f.path);
+    /** Complete operation, including names collected before helper execution. */
+    const operation = {
+        kind: 'migrate', groups: ['example.test'],
+        targetNames: [
+            { group: 'example.test', ip: '192.0.2.1', name: 'lab' },
+            { group: 'example.test', ip: '127.0.0.1', name: 'local' }
+        ]
+    };
+    /** Expected output must match the independently replayed helper result byte for byte. */
+    const expected = transform(source.text, operation);
+    /** Versioned request passed to the actual compiled helper entry. */
+    const request = { ...f.request, sourceDigest: source.digest, operation, resultDigest: sha256(expected) };
+    await assert.rejects(commit({ ...request, resultDigest: '0'.repeat(64) }), /approved preview/);
+    assert.equal(await readFile(f.path, 'utf8'), source.text);
+    /** Request bytes hashed independently of the expected result. */
+    const bytes = JSON.stringify(request);
+    /** Disposable protocol file, cleaned with the fixture directory. */
+    const path = join(f.dir, 'migration-request.json');
+    await writeFile(path, bytes);
+    await run(process.execPath, [resolve('dist/fs/helper.js'), '--commit-request', path, sha256(bytes)]);
+    assert.equal(await readFile(f.path, 'utf8'), expected);
+    assert.equal(parse(expected).document.groups[0].activeTarget, 'local');
+    assert.deepEqual(JSON.parse(await readFile(`${path}.result`, 'utf8')), { ok: true, changed: true });
+    assert.ok(!(await readdir(f.dir)).includes('sample hosts.hostman.lock'));
+});
+
+test('helper rejects invalid migration names without replacing the source', async t => {
+    /** Transaction fixture dedicated to a malformed naming payload. */
+    const f = await fixture(t);
+    await writeFile(f.path, '#127.0.0.1 www.example.test\n');
+    /** Current snapshot used by the malformed request. */
+    const source = await readSource(f.path);
+    /** Syntactically valid request envelope with an invalid target name inside its operation. */
+    const request = {
+        ...f.request, sourceDigest: source.digest,
+        operation: {
+            kind: 'migrate', groups: ['example.test'],
+            targetNames: [{ group: 'example.test', ip: '127.0.0.1', name: 'bad name' }]
+        }
+    };
+    /** Hashable request bytes do not bypass domain naming validation. */
+    const bytes = JSON.stringify(request);
+    /** Temporary request consumed by the helper protocol. */
+    const path = join(f.dir, 'invalid-migration.json');
+    await writeFile(path, bytes);
+    await assert.rejects(helper(path, sha256(bytes)), /migration target name/);
+    assert.equal(await readFile(f.path, 'utf8'), source.text);
+    assert.equal(JSON.parse(await readFile(`${path}.result`, 'utf8')).ok, false);
+    assert.ok(!(await readdir(f.dir)).includes('sample hosts.hostman.lock'));
+});
 test('platform path defaults and relative custom paths',
     () => {
         assert.equal(sourcePath(undefined,

@@ -7,8 +7,8 @@ import {
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { HostmanError, sha256 } from '../domain/model.js';
-import { transform, type Operation } from '../domain/operations.js';
+import { HostmanError, sha256 } from '#hostman/domain/model';
+import { transform, type Operation } from '#hostman/domain/operations';
 export function sourcePath(
     custom?: string,
     platform = process.platform,

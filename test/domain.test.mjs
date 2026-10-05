@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
     parse, serialize, candidates
-} from '../dist/hosts/document.js';
+} from '#hostman/hosts/document';
 import {
     groupDigest, ipKey, validate
-} from '../dist/domain/model.js';
-import { transform, applyOperation } from '../dist/domain/operations.js';
+} from '#hostman/domain/model';
+import { transform, applyOperation } from '#hostman/domain/operations';
 const group = (name = 'foo.test', ip = '10.20.0.10') => ({
     name,
     enabled: true,
@@ -390,7 +390,6 @@ test('migration retains BOM, CRLF, and final comments without newline',
     });
 for (const [text, reason] of [
     ['10.0.0.1 api.foo.test\n10.0.0.2 www.foo.test\n', 'Multiple'],
-    ['10.0.0.1 api.foo.test\n10.0.0.1 api.foo.test\n', 'Duplicate'],
     [managed() + '10.0.0.1 new.foo.test\n', 'differs'],
     [
         op(managed(),
@@ -400,7 +399,6 @@ for (const [text, reason] of [
             }) + '10.20.0.10 new.foo.test\n',
         'disabled'
     ],
-    [managed() + '10.20.0.10 api.foo.test\n', 'managed'],
 ]) {
     test(`migration skip: ${reason}`,
         () => {

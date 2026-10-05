@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parse, serialize } from '../dist/hosts/document.js';
-import { transform } from '../dist/domain/operations.js';
-import { operationHints, showHints, formatHints, quoteArgument, relatedHints, errorHints } from '../dist/cli/hints.js';
+import { parse, serialize } from '#hostman/hosts/document';
+import { transform } from '#hostman/domain/operations';
+import { operationHints, showHints, formatHints, quoteArgument, relatedHints, errorHints } from '#hostman/cli/hints';
 
 function fixture(overrides = {}) {
     const group = {

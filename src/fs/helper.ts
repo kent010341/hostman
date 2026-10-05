@@ -1,4 +1,4 @@
-import { helper } from './storage.js';
+import { helper } from '#hostman/fs/storage';
 if (process.argv.length !== 5 || process.argv[2] !== '--commit-request') {
     console.error('Invalid helper invocation.');
     process.exitCode = 1;

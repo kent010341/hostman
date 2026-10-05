@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "Hosts-native grouped hostname and target manager",
   "type": "module",
+  "imports": {
+    "#hostman/*": {
+      "types": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  },
   "license": "MIT",
   "engines": {
     "node": ">=24"

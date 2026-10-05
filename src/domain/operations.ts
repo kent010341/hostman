@@ -1,14 +1,29 @@
+import { isIP } from 'node:net';
 import {
-    HostmanError, belongs, ipKey, normalizeHost, resolveTarget, validate, type Group, type HostmanDocument, type Target
-} from './model.js';
+    HostmanError, belongs, ipKey, normalizeHost, resolveTarget, validate, validName,
+    type Group, type HostmanDocument, type Target
+} from '#hostman/domain/model';
 import {
-    candidates, parse, removeImported, serialize
-} from '../hosts/document.js';
+    candidates, importedName, parse, removeImported, serialize, type Candidate, type CandidateTarget
+} from '#hostman/hosts/document';
+/** A user-selected name for a newly imported semantic IP target. */
+export type MigrationTargetName = {
+    /** Group receiving the target. */
+    group: string;
+    /** Candidate IP, compared semantically during replay. */
+    ip: string;
+    /** Valid target name unique within the group. */
+    name: string;
+};
+/** Replayable domain mutation, including optional migration target names. */
 export type Operation = {
     kind: 'init';
 } | {
     kind: 'migrate';
+    /** Explicitly selected candidate groups. */
     groups: string[];
+    /** Optional names collected before any write or elevation. */
+    targetNames?: MigrationTargetName[];
 } | {
     kind: 'add-group';
     group: Group;
@@ -210,7 +225,43 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
         touched
     };
 }
+/**
+ * Apply validated migration names while allocating deterministic defaults.
+ * @param candidate Current source-derived migration proposal.
+ * @param names Validated naming overrides collected by the CLI.
+ * @param reserved Existing target names, including targets absent from the proposal.
+ * @returns Candidate targets with their final names.
+ */
+export function migrationTargets(
+    candidate: Candidate,
+    names: MigrationTargetName[],
+    reserved: string[]
+): CandidateTarget[] {
+    /** Target names unavailable for new definitions. */
+    const used = new Set(reserved);
+    return candidate.targets.map(target => {
+        if (!target.create) {
+            return target;
+        }
+        /** Explicit name for this group and semantic IP, if supplied. */
+        const override = names.find(n => n.group === candidate.group && ipKey(n.ip) === ipKey(target.ip));
+        /** Final name, allocated against previously accepted names. */
+        const name = override?.name ?? importedName(used);
+        if (!validName(name) || used.has(name)) {
+            throw new HostmanError(`Invalid or duplicate migration target name ${name} in ${candidate.group}.`);
+        }
+        used.add(name);
+        return { ...target, name };
+    });
+}
+/**
+ * Transform current hosts text through a validated replayable operation.
+ * @param text Original selected hosts source.
+ * @param operation Requested mutation, including any migration names.
+ * @returns Validated transformed text, or the original text for a no-op.
+ */
 export function transform(text: string, operation: Operation): string {
+    /** Parsed source refreshed after imported aliases have been removed. */
     let parsed = parse(text);
     if (parsed.documentFatal) {
         throw new HostmanError(parsed.conflicts.map(c => c.message).join('\n'));
@@ -224,7 +275,10 @@ export function transform(text: string, operation: Operation): string {
             new Set());
     }
     if (operation.kind === 'migrate') {
-        const found = candidates(parsed), chosen = found.filter(c => operation.groups.includes(c.group));
+        /** Current proposals; caller input never supplies source-derived group state. */
+        const found = candidates(parsed);
+        /** Explicitly selected proposals. */
+        const chosen = found.filter(c => operation.groups.includes(c.group));
         for (const name of operation.groups) {
             if (!found.some(c => c.group === name) && !parsed.document.groups.some(g => g.name === name)) {
                 throw new HostmanError(`No candidate or managed group ${name}.`);
@@ -233,30 +287,56 @@ export function transform(text: string, operation: Operation): string {
         if (chosen.some(c => c.reason)) {
             throw new HostmanError(chosen.filter(c => c.reason).map(c => `${c.group}: ${c.reason}`).join('\n'));
         }
+        /** Naming payload is untrusted when received through the helper protocol. */
+        const payload: unknown = operation.targetNames === undefined ? [] : operation.targetNames;
+        if (!Array.isArray(payload)) {
+            throw new HostmanError('Invalid migration target names.');
+        }
+        /** Narrowed overrides checked against current candidate IPs and selection. */
+        const names: MigrationTargetName[] = [];
+        for (const value of payload as unknown[]) {
+            if (!value || typeof value !== 'object' || !('group' in value) || typeof value.group !== 'string'
+                || !('ip' in value) || typeof value.ip !== 'string' || !isIP(value.ip)
+                || !('name' in value) || typeof value.name !== 'string' || !validName(value.name)) {
+                throw new HostmanError('Invalid migration target name.');
+            }
+            /** Stable narrowed entry for candidate checks and helper replay. */
+            const entry = { group: value.group, ip: value.ip, name: value.name };
+            if (!chosen.some(c => c.group === entry.group
+                && c.targets.some(t => t.create && ipKey(t.ip) === ipKey(entry.ip)))
+                || names.some(n => n.group === entry.group && ipKey(n.ip) === ipKey(entry.ip))) {
+                throw new HostmanError('Invalid, duplicate, or unrelated migration target name.');
+            }
+            names.push(entry);
+        }
         if (!chosen.length) {
             return text;
         }
+        /** Original newline style survives complete removal of all source rules. */
         const originalEol = parsed.eol;
         parsed = parse(removeImported(parsed,
             new Set(chosen.flatMap(c => c.hosts))));
         parsed.eol = originalEol;
+        /** Managed document after removal, preserving unrelated groups. */
         const doc = structuredClone(parsed.document);
         for (const candidate of chosen) {
+            /** Existing group, when this is a compatible incremental import. */
             const g = doc.groups.find(g => g.name === candidate.group);
+            /** Final target names shared by normal commits and helper replay. */
+            const targets = migrationTargets(candidate, names, g?.targets.map(t => t.name) ?? []);
             if (g) {
-                g.hosts.push(...candidate.hosts);
+                g.hosts = [...new Set([...g.hosts, ...candidate.hosts])];
+                g.targets.push(...targets.filter(t => t.create).map(t => ({
+                    name: t.name, source: 'group' as const, ip: t.ip
+                })));
             } else {
+                /** Original selected IP identifies the renamed active target without changing its semantics. */
+                const active = candidate.targets.find(t => t.name === candidate.activeTarget)!;
                 doc.groups.push({
                     name: candidate.group,
-                    enabled: true,
-                    activeTarget: 'imported',
-                    targets: [
-                        {
-                            name: 'imported',
-                            source: 'group',
-                            ip: candidate.ip
-                        }
-                    ],
+                    enabled: candidate.enabled,
+                    activeTarget: targets.find(t => ipKey(t.ip) === ipKey(active.ip))!.name,
+                    targets: targets.map(t => ({ name: t.name, source: 'group', ip: t.ip })),
                     hosts: candidate.hosts
                 });
             }

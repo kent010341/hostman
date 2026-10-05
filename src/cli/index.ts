@@ -5,25 +5,29 @@ import {
 } from '@inquirer/prompts';
 import { networkInterfaces } from 'node:os';
 import {
-    HostmanError, ipKey, resolveTarget, sha256, type Group
-} from '../domain/model.js';
+    HostmanError, ipKey, resolveTarget, sha256, validName, type Group
+} from '#hostman/domain/model';
 import {
-    targetFrom, transform, type Operation
-} from '../domain/operations.js';
-import { candidates, parse } from '../hosts/document.js';
-import { errorHints, formatHints, operationHints, relatedHints, showHints, type Hint } from './hints.js';
+    targetFrom, transform, type MigrationTargetName, type Operation
+} from '#hostman/domain/operations';
+import { candidates, importedName, parse } from '#hostman/hosts/document';
+import { errorHints, formatHints, operationHints, relatedHints, showHints, type Hint } from '#hostman/cli/hints';
 import {
     execute, readSource, sourcePath
-} from '../fs/storage.js';
+} from '#hostman/fs/storage';
 const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 type RootOptions = {
     hostsFile?: string;
     elevate: boolean;
     hints: boolean
 };
+/** Options controlling migration selection without changing source-derived proposals. */
 type MigrationOptions = {
+    /** Explicit group selections, repeatable on the command line. */
     group: string[];
+    /** Select every eligible group. */
     all?: boolean;
+    /** Preview without prompts or mutations. */
     dryRun?: boolean
 };
 type GroupOptions = {
@@ -59,10 +63,17 @@ function suggest(hints: Hint[], path?: string): void {
         console.log(formatHints(hints, program.opts<RootOptions>().hostsFile ? path : undefined));
     }
 }
+/**
+ * Suggest source review without implying repair can remove unmanaged rules.
+ * @param parsed Current managed conflicts and group state.
+ * @param skipped Whether migration proposals were rejected.
+ * @returns Contextual review or recovery commands.
+ */
 function migrationRecovery(parsed: ReturnType<typeof parse>, skipped: boolean): Hint[] {
     if (skipped) {
         return [{ description: 'Resolve the SKIP reasons above, then preview again:', args: ['migrate', '--dry-run'] },
-            ...parsed.conflicts.length ? [{ description: 'Review repair options:', args: ['repair', '--help'] }] : []];
+            ...parsed.conflicts.some(c => c.type !== 'UnmanagedHostnameConflict')
+                ? [{ description: 'Review repair options:', args: ['repair', '--help'] }] : []];
     }
     const hints = showHints(parsed, parsed.groups.map(g => g.group.name));
     return hints.length
@@ -182,23 +193,33 @@ command(program,
     .option('--dry-run',
         'Preview without prompts, writes, or elevation')
     .action(async (options: MigrationOptions) => {
-        const snapshot = await source(), parsed = parse(snapshot.text), found = candidates(parsed);
+        /** Source snapshot used for preview, prompting and the eventual digest-checked write. */
+        const snapshot = await source();
+        /** Managed state and effective conflicts from the same source snapshot. */
+        const parsed = parse(snapshot.text);
+        /** Deterministic migration proposals, including commented targets. */
+        const found = candidates(parsed);
         console.log(`Source: ${snapshot.path}`);
         for (const conflict of parsed.conflicts) {
             console.log(`CONFLICT${conflict.group ? ` ${conflict.group}` : ''}: ${conflict.message}`);
         }
         for (const c of found) {
-            console.log(`${c.group}: ${c.ip}; ${c.hosts.join(', ')}${c.reason ? ` [SKIP: ${c.reason}]` : ''}`);
+            console.log(`${c.group}: targets: ${c.targets.map(t => `${t.name}=${t.ip}`).join(', ')};`
+                + ` hosts: ${c.hosts.join(', ')}; active: ${c.enabled ? c.activeTarget : 'none (disabled)'}`
+                + `${c.enabled ? '' : `; enable selects: ${c.activeTarget}`}`
+                + `${c.reason ? ` [SKIP: ${c.reason}]` : ''}`);
         }
         if (!found.length) {
             console.log('No migration candidates.');
         }
+        /** Normalized explicit selections. */
         const requested: string[] = options.group.map((name: string) => name.toLowerCase());
         for (const name of requested) {
             if (!found.some(c => c.group === name) && !parsed.document.groups.some(g => g.name === name)) {
                 throw new HostmanError(`No candidate or managed group ${name}.`);
             }
         }
+        /** Only safe, selected proposals may reach prompting or transformation. */
         const eligible = found.filter(c => !c.reason && (!requested.length || requested.includes(c.group)));
         if (options.dryRun) {
             console.log(`Eligible: ${eligible.map(c => c.group).join(', ') || 'none'}`);
@@ -211,6 +232,7 @@ command(program,
             suggest(migrationRecovery(parsed, found.some(c => c.reason)), snapshot.path);
             return;
         }
+        /** Final group selection, optionally narrowed by the interactive checklist. */
         let selected = eligible.map(c => c.group);
         if (!options.all && !requested.length) {
             if (!interactive) {
@@ -223,19 +245,50 @@ command(program,
                     value: c.group
                 }))
             });
-            if (!selected.length || !await confirm({
-                message: `Move selected rules into hostman in ${snapshot.path}?`,
-                default: false
-            })) {
+            if (!selected.length) {
                 console.log('Cancelled; no changes.');
                 return;
             }
         }
-        await mutate({
-            kind: 'migrate',
-            groups: selected
-        },
-        snapshot);
+        /** Names collected before the non-interactive commit helper can run. */
+        const targetNames: MigrationTargetName[] = [];
+        if (interactive) {
+            for (const candidate of eligible.filter(c => selected.includes(c.group))) {
+                /** Existing and accepted names reserved only within this group. */
+                const used = new Set(parsed.document.groups.find(g => g.name === candidate.group)
+                    ?.targets.map(t => t.name));
+                for (const target of candidate.targets.filter(t => t.create)) {
+                    /** Chosen target name, with Enter accepting the next available default. */
+                    const name = await input({
+                        message: `Target name for ${candidate.group} (${target.ip})`,
+                        default: importedName(used),
+                        validate: value => validName(value) && !used.has(value)
+                            ? true : 'Use a unique target name containing letters, numbers, underscores or hyphens.'
+                    });
+                    used.add(name);
+                    targetNames.push({ group: candidate.group, ip: target.ip, name });
+                }
+            }
+        }
+        /** Complete replayable operation with source-derived state omitted. */
+        const operation: Operation = { kind: 'migrate', groups: selected, targetNames };
+        /** Validated final document provides an accurate summary after naming. */
+        const result = parse(transform(snapshot.text, operation));
+        console.log('Migration summary:');
+        for (const group of result.document.groups.filter(g => selected.includes(g.name))) {
+            console.log(`${group.name}: targets: ${group.targets.map(t =>
+                `${t.name}=${t.source === 'group' ? t.ip : `@${t.globalName}`}`).join(', ')};`
+                + ` hosts: ${group.hosts.join(', ')}; active: ${group.enabled ? group.activeTarget : 'none (disabled)'}`
+                + `${group.enabled ? '' : `; enable selects: ${group.activeTarget}`}`);
+        }
+        if (interactive && !options.all && !requested.length && !await confirm({
+            message: `Move selected rules into hostman in ${snapshot.path}?`,
+            default: false
+        })) {
+            console.log('Cancelled; no changes.');
+            return;
+        }
+        await mutate(operation, snapshot);
     });
 command(program,
     'show [selection]',
@@ -313,7 +366,7 @@ command(add,
                 index),
             spec.slice(index + 1));
         });
-        const { expandHost } = await import('../domain/operations.js');
+        const { expandHost } = await import('#hostman/domain/operations');
         const hosts = options.host.length ? options.host : ['@'];
         const group: Group = {
             name: groupName,

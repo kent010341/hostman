@@ -40,10 +40,14 @@ hostman show all
 ```
 
 You do not need to run `init` first. A hostname such as `api.foo.test` becomes part of the `foo.test` group.
-Imported groups start with a target named `imported`, using their existing IP.
+Migration imports effective rules and commented rules such as `#127.0.0.1 api.foo.test`.
+Each distinct IP becomes a target, with default names `imported`, `imported-2`, and so on. Interactive imports
+let you name each new target; press Enter to accept its default. Hostnames are combined across targets.
+One effective IP enables the new group and selects that target. Commented-only groups start disabled.
 
-Run `hostman migrate` again whenever you add more rules manually. Groups with conflicting or mixed IPs are
-skipped with an explanation; fix those rules before trying again.
+Run `hostman migrate` again whenever you add more rules manually. Multiple effective IPs or conflicts with
+an existing group's active IP are skipped with source details; fix those rules before trying again.
+For copyable fixtures and expected results, see the [manual migration checks](docs/MIGRATION-TESTING.md).
 
 ### Starting a new project?
 
