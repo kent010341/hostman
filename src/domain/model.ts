@@ -1,19 +1,23 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
+/** A group-owned destination containing a literal IP address. */
 export type Target = {
+    /** Name used to select this destination within its group. */
     name: string;
-    source: 'global';
-    globalName: string;
-} | {
-    name: string;
-    source: 'group';
+    /** Literal IPv4 or IPv6 destination. */
     ip: string;
 };
+/** Owned hostnames sharing one group or global destination selection. */
 export type Group = {
+    /** Two-label root domain identifying the group. */
     name: string;
+    /** Whether the group emits effective hosts mappings. */
     enabled: boolean;
+    /** Group target name or @global name selected for this group. */
     activeTarget: string;
+    /** Literal destinations; may be empty when a global is selected. */
     targets: Target[];
+    /** Hostnames owned exclusively by this group. */
     hosts: string[];
 };
 export type HostmanDocument = {
@@ -66,23 +70,43 @@ export function ipKey(ip: string): string {
     }
     return ip;
 }
+/**
+ * Resolve a group destination or an explicit global selection.
+ * @param doc Managed global definitions.
+ * @param group Group owning the selection.
+ * @param name Group target name or @global name; defaults to the active selection.
+ * @returns The selected literal IP address.
+ */
 export function resolveTarget(doc: HostmanDocument, group: Group, name = group.activeTarget): string {
+    if (name.startsWith('@')) {
+        /** Global name without the selection prefix. */
+        const globalName = name.slice(1);
+        if (!validName(globalName)) {
+            throw new HostmanError(`Invalid global target name "${globalName}" in ${group.name}.`);
+        }
+        /** Shared definition selected directly by the group. */
+        const global = doc.globals.find(t => t.name === globalName);
+        if (!global) {
+            throw new HostmanError(`Missing global target "${globalName}" in ${group.name}.`);
+        }
+        return global.ip;
+    }
+    /** Group-owned target selected without a global prefix. */
     const target = group.targets.find(t => t.name === name);
     if (!target) {
         throw new HostmanError(`Missing target "${name}" in ${group.name}.`);
     }
-    if (target.source === 'group') {
-        return target.ip;
-    }
-    const global = doc.globals.find(t => t.name === target.globalName);
-    if (!global) {
-        throw new HostmanError(`Missing global target "${target.globalName}" in ${group.name}.`);
-    }
-    return global.ip;
+    return target.ip;
 }
+/**
+ * Hash group configuration independently of target and hostname ordering.
+ * @param group Configuration including the direct destination selection.
+ * @returns Eight-character semantic SHA-256 digest.
+ */
 export function groupDigest(group: Group): string {
+    /** Canonical literal destination definitions. */
     const targets = [...group.targets].sort((a, b) => a.name.localeCompare(b.name,
-        'en')).map(t => `target:${t.name}=${t.source === 'global' ? `@${t.globalName}` : ipKey(t.ip)}`);
+        'en')).map(t => `target:${t.name}=${ipKey(t.ip)}`);
     return sha256([
         `group=${group.name}`,
         `enabled=${group.enabled}`,
@@ -92,6 +116,12 @@ export function groupDigest(group: Group): string {
     ].join('\n')).slice(0,
         8);
 }
+/**
+ * Validate ownership, literal destinations and group or global active selections.
+ * @param doc Reconstructed managed definitions.
+ * @param unmanaged Effective hostnames outside the managed section.
+ * @returns All structural and group-scoped domain conflicts.
+ */
 export function validate(doc: HostmanDocument, unmanaged: Set<string> = new Set()): Conflict[] {
     const conflicts: Conflict[] = [];
     const add = (type: ConflictType, message: string, group?: string) => conflicts.push({
@@ -141,18 +171,21 @@ export function validate(doc: HostmanDocument, unmanaged: Set<string> = new Set(
                     `Invalid target name ${t.name}.`,
                     g.name);
             }
-            if (t.source === 'group' && !isIP(t.ip)) {
+            if (!isIP(t.ip)) {
                 add('InvalidIpConflict',
                     `Invalid IP ${t.ip}.`,
                     g.name);
             }
-            if (t.source === 'global' && !globals.has(t.globalName)) {
-                add('MissingGlobalTargetConflict',
-                    `Missing global target ${t.globalName}.`,
-                    g.name);
-            }
         }
-        if (!targets.has(g.activeTarget)) {
+        if (g.activeTarget.startsWith('@')) {
+            /** Direct global selection, independent of group-owned targets. */
+            const globalName = g.activeTarget.slice(1);
+            if (!validName(globalName)) {
+                add('InvalidTargetNameConflict', `Invalid global target name ${globalName}.`, g.name);
+            } else if (!globals.has(globalName)) {
+                add('MissingGlobalTargetConflict', `Missing global target ${globalName}.`, g.name);
+            }
+        } else if (!targets.has(g.activeTarget)) {
             add('MissingTargetConflict',
                 `Missing active target ${g.activeTarget}.`,
                 g.name);

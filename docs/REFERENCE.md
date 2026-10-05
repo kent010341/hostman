@@ -53,8 +53,9 @@ Disabled new groups retain the first imported target as their selection for a la
 and summaries show `active: none (disabled)` and `enable selects: <target>`; `show` reports the stored active
 selection and its IP together with the disabled flag. There are no effective mappings while disabled.
 
-Existing groups retain enabled state, active selection, target names, IPs and global references. Matching IPs
-reuse the active target first, then the first matching existing target; new IPs become literal group targets.
+Existing groups retain enabled state, active selection, target names and IPs. Matching IPs reuse the active
+selection first, including a direct global selection, then the first matching group target; new IPs become
+literal group targets. Matching uses semantic IP comparison, including equivalent IPv6 spellings.
 Compatible outside duplicates owned by the same group can be absorbed without bypassing other validation.
 Skip diagnostics identify source line numbers, aliases, outside IPs and the managed active IP or disabled state.
 Edit conflicting outside rules before retrying; `repair` is for damaged managed blocks, not outside rules.
@@ -73,14 +74,22 @@ comment prefix and inline comments. If every alias on a line is imported, its in
 Each hostname belongs to exactly one group and cannot also occur in unmanaged effective rules. All enabled
 hosts in a group use its active target's IP. Disabled groups retain definitions without effective rules.
 
-Target names are arbitrary: `local`, `lab`, and `prod` have no special runtime meaning. `@local` explicitly
-references a global target named `local`. Changing its IP updates enabled groups actively using it.
-Referenced globals and active group targets cannot be removed.
+Target names are arbitrary: `local`, `lab`, and `prod` have no special runtime meaning. Group targets contain
+literal IPs only. `hostman use example.com local` selects the group's `local` target, while
+`hostman use example.com '@local'` directly selects the global named `local`, without creating a group target.
+The interactive Switch target menu lists group targets first, then all global targets, showing source and IP.
+Changing a global IP updates enabled groups selecting it. Disabled groups retain their selection and use the
+latest IP when enabled. A global selected by any group, including a disabled group, cannot be removed.
+Active group targets cannot be removed; switch to another group or global target first.
 
 When creating a group, repeat `--target name=value` and `--host hostname` as needed. The first initial target
 is active unless `--active <name>` is specified. Omitting `--host` includes the group root hostname by default.
 Explicit `--host` options define the complete initial hostname list; use `@` to include the root.
-`--disabled` creates the group without effective rules.
+`--disabled` creates the group without effective rules. `--active '@local'` selects a global directly;
+when no `--target` options are supplied, it creates a group with no group-owned targets and skips the initial
+target prompt. An empty target list is valid only when the active selection resolves to an existing global.
+For example: `hostman add group example.com --active '@local' --host '@' --host api`.
+`target add/set` and `--target name=value` reject global references; supply a literal IP instead.
 
 If an older version created an empty group, add its root with `hostman add host <group> @`.
 
@@ -148,8 +157,7 @@ in comments; enabled hosts use normal rules. Group markers include an eight-char
 ```text
 # >>> hostman v1
 # global local=127.0.0.1
-# >>> group foo.test enabled=true active=local hash=<digest>
-# target local=@local
+# >>> group foo.test enabled=true active=@local hash=<digest>
 127.0.0.1 api.foo.test
 # <<< group foo.test
 # <<< hostman

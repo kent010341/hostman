@@ -5,7 +5,7 @@ import {
     parse, serialize, candidates
 } from '#hostman/hosts/document';
 import {
-    groupDigest, ipKey, validate
+    groupDigest, ipKey, validate, resolveTarget
 } from '#hostman/domain/model';
 import { transform, applyOperation } from '#hostman/domain/operations';
 const group = (name = 'foo.test', ip = '10.20.0.10') => ({
@@ -15,12 +15,10 @@ const group = (name = 'foo.test', ip = '10.20.0.10') => ({
     targets: [
         {
             name: 'lab',
-            source: 'group',
             ip
         },
         {
             name: 'prod',
-            source: 'group',
             ip: '10.30.0.10'
         }
     ],
@@ -34,6 +32,60 @@ const managed = (groups = [group()], globals = []) => serialize(parse('127.0.0.1
     });
 const op = (text, operation) => transform(text,
     operation);
+test('direct global selections support empty targets, same names and stable switching', () => {
+    /** Local and global destinations deliberately share a name. */
+    const local = group();
+    /** Shared IP is distinct from the group-owned lab destination. */
+    const globals = [{ name: 'lab', ip: '127.0.0.1' }];
+    /** Clean source before choosing a direct global. */
+    const original = managed([local], globals);
+    /** Switching changes only the selection and effective rules. */
+    const switched = op(original, { kind: 'use', group: local.name, target: '@lab' });
+    /** Parsed representation retains literal targets without introducing references. */
+    const parsed = parse(switched);
+    assert.equal(parsed.groups[0].status, 'CLEAN');
+    assert.equal(parsed.document.groups[0].activeTarget, '@lab');
+    assert.deepEqual(parsed.document.groups[0].targets, local.targets);
+    assert.equal(resolveTarget(parsed.document, parsed.document.groups[0]), '127.0.0.1');
+    assert.equal(op(switched, { kind: 'use', group: local.name, target: '@lab' }), switched);
+    assert.equal(op(switched, { kind: 'use', group: local.name, target: 'lab' }), original);
+    for (const target of ['@missing', '@', '@bad.name', 'missing']) {
+        assert.throws(() => op(original, { kind: 'use', group: local.name, target }));
+    }
+    /** A group may have only a direct shared destination. */
+    const sharedOnly = { ...local, activeTarget: '@lab', targets: [] };
+    assert.equal(parse(managed([sharedOnly], globals)).groups[0].status, 'CLEAN');
+    assert.deepEqual(validate({ version: 1, groups: [sharedOnly], globals }), []);
+    assert.throws(() => op(switched, {
+        kind: 'target-set', group: local.name, target: { name: 'lab', ip: '@lab' }
+    }), /Invalid IP/);
+});
+
+test('direct globals protect disabled selections and isolate conflicted consumers', () => {
+    /** Disabled selections still prevent deletion of the shared definition. */
+    const disabled = { ...group(), enabled: false, activeTarget: '@shared', targets: [] };
+    /** Shared destination used by the disabled group. */
+    const globals = [{ name: 'shared', ip: '127.0.0.1' }];
+    /** Source with no effective managed mappings. */
+    const source = managed([disabled], globals);
+    assert.throws(() => op(source, { kind: 'global-remove', name: 'shared' }), /foo.test/);
+    /** Updating the global preserves the disabled group block byte for byte. */
+    const updated = op(source, { kind: 'global-set', name: 'shared', ip: '127.0.0.2' });
+    assert.equal(parse(updated).document.groups[0].enabled, false);
+    assert.match(op(updated, { kind: 'enable', group: disabled.name }), /127.0.0.2 foo.test/);
+    /** Active global consumers participate in pre-mutation conflict checks. */
+    const conflicted = op(source, { kind: 'enable', group: disabled.name })
+        .replace('127.0.0.1 foo.test', '192.0.2.9 foo.test');
+    assert.throws(() => op(conflicted, {
+        kind: 'global-set', name: 'shared', ip: '127.0.0.2'
+    }), /Conflicted scope/);
+    /** Restoring configured mappings does not change the shared definition. */
+    const restored = op(conflicted, { kind: 'repair', group: disabled.name, strategy: 'restore' });
+    assert.equal(parse(restored).groups[0].status, 'CLEAN');
+    assert.throws(() => op(restored, {
+        kind: 'repair', group: disabled.name, strategy: 'keep', ip: '127.0.0.1'
+    }), /group-owned active target/);
+});
 test('canonical parse/serialize is stable and all groups are clean',
     () => {
         const text = managed();
@@ -95,8 +147,7 @@ for (const [
         ],
         [
             'missing global',
-            s => s.replace('# target lab=10.20.0.10',
-                '# target lab=@missing'),
+            s => s.replace('active=lab', 'active=@missing'),
             'MissingGlobalTargetConflict'
         ],
         [
@@ -174,21 +225,10 @@ test('disable retains definitions and enable restores effective entries',
             }),
         disabled);
     });
-test('global updates affect only enabled groups actively referencing that global',
+test('global updates affect only enabled groups directly selecting that global',
     () => {
         const a = group(), b = group('bar.test'), c = group('old.test');
-        for (const g of [
-            a,
-            b,
-            c
-        ]) {
-            g.targets.push({
-                name: 'local',
-                source: 'global',
-                globalName: 'local'
-            });
-        }
-        a.activeTarget = c.activeTarget = 'local';
+        a.activeTarget = c.activeTarget = '@local';
         c.enabled = false;
         const text = managed([
             a,
@@ -221,7 +261,7 @@ test('global updates affect only enabled groups actively referencing that global
                 kind: 'global-remove',
                 name: 'local'
             }),
-        /referenced/);
+        /selected/);
     });
 test('pure operations never mutate their input and reject invalid targets',
     () => {
@@ -247,8 +287,7 @@ test('pure operations never mutate their input and reject invalid targets',
                 group: 'foo.test',
                 target: {
                     name: 'bad',
-                    source: 'global',
-                    globalName: 'missing'
+                    ip: '@missing'
                 }
             }));
         assert.throws(() => op(managed(),

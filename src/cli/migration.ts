@@ -68,11 +68,11 @@ export function formatMigrationCandidate(candidate: Candidate): string {
 
 /**
  * Render the validated final migration state after accepting target names.
- * @param group Resulting managed group, preserving literal targets and global references.
+ * @param group Resulting managed group, preserving literal targets and its active selection.
  * @returns A final summary block using accepted names and the resulting enabled state.
  */
 export function formatMigrationGroup(group: Group): string {
     return groupBlock(group.name, group.targets.map(t =>
-        `${t.name}=${t.source === 'group' ? t.ip : `@${t.globalName}`}`),
+        `${t.name}=${t.ip}`),
     group.hosts, group.enabled, group.activeTarget);
 }
