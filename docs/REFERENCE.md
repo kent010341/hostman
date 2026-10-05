@@ -59,6 +59,12 @@ Compatible outside duplicates owned by the same group can be absorbed without by
 Skip diagnostics identify source line numbers, aliases, outside IPs and the managed active IP or disabled state.
 Edit conflicting outside rules before retrying; `repair` is for damaged managed blocks, not outside rules.
 
+Every preview group occupies its own multi-line READY or SKIP block, separated by a blank line. READY blocks
+and final summaries list targets and hostnames on separate lines, followed by active state. SKIP blocks show
+the reason first, then the original source rules in line-number order with each line's aliases combined, and
+a suggested action. They omit proposed target names, active state and enable selection because no import
+will take place for that group. Formatting is the same in interactive terminals, dry runs and scripts.
+
 Selected hostname tokens move into management in one transaction. Unselected aliases retain their IP, spacing,
 comment prefix and inline comments. If every alias on a line is imported, its inline comment remains separately.
 

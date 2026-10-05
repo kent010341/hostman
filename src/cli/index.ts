@@ -11,6 +11,7 @@ import {
     targetFrom, transform, type MigrationTargetName, type Operation
 } from '#hostman/domain/operations';
 import { candidates, importedName, parse } from '#hostman/hosts/document';
+import { formatMigrationCandidate, formatMigrationGroup } from '#hostman/cli/migration';
 import { errorHints, formatHints, operationHints, relatedHints, showHints, type Hint } from '#hostman/cli/hints';
 import {
     execute, readSource, sourcePath
@@ -203,13 +204,9 @@ command(program,
         for (const conflict of parsed.conflicts) {
             console.log(`CONFLICT${conflict.group ? ` ${conflict.group}` : ''}: ${conflict.message}`);
         }
-        for (const c of found) {
-            console.log(`${c.group}: targets: ${c.targets.map(t => `${t.name}=${t.ip}`).join(', ')};`
-                + ` hosts: ${c.hosts.join(', ')}; active: ${c.enabled ? c.activeTarget : 'none (disabled)'}`
-                + `${c.enabled ? '' : `; enable selects: ${c.activeTarget}`}`
-                + `${c.reason ? ` [SKIP: ${c.reason}]` : ''}`);
-        }
-        if (!found.length) {
+        if (found.length) {
+            console.log(found.map(formatMigrationCandidate).join('\n\n'));
+        } else {
             console.log('No migration candidates.');
         }
         /** Normalized explicit selections. */
@@ -275,12 +272,8 @@ command(program,
         /** Validated final document provides an accurate summary after naming. */
         const result = parse(transform(snapshot.text, operation));
         console.log('Migration summary:');
-        for (const group of result.document.groups.filter(g => selected.includes(g.name))) {
-            console.log(`${group.name}: targets: ${group.targets.map(t =>
-                `${t.name}=${t.source === 'group' ? t.ip : `@${t.globalName}`}`).join(', ')};`
-                + ` hosts: ${group.hosts.join(', ')}; active: ${group.enabled ? group.activeTarget : 'none (disabled)'}`
-                + `${group.enabled ? '' : `; enable selects: ${group.activeTarget}`}`);
-        }
+        console.log(result.document.groups.filter(g => selected.includes(g.name))
+            .map(formatMigrationGroup).join('\n\n'));
         if (interactive && !options.all && !requested.length && !await confirm({
             message: `Move selected rules into hostman in ${snapshot.path}?`,
             default: false

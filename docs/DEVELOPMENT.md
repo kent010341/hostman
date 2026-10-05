@@ -16,6 +16,10 @@ TypeScript types to `src/*.ts` and Node execution to `dist/*.js`, including test
 NodeNext resolves the same map during compilation; no runtime loader or separate test alias is required.
 The packaged CLI only needs the compiled files for runtime resolution.
 
+Migration presentation lives in the pure `src/cli/migration.ts` formatter. Candidate skip reasons and source
+occurrences remain separate structured data; domain and helper errors independently include source diagnostics.
+Preview formatting combines same-line aliases and separates rejected proposals from hypothetical resulting state.
+
 ## Code quality and tests
 
 ```sh

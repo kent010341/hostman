@@ -80,8 +80,9 @@ test('dry-run and scripted migration expose multi-target state without prompting
     const preview = spawnSync(process.execPath,
         [entry, '--hosts-file', f.path, 'migrate', '--dry-run'], { encoding: 'utf8' });
     assert.equal(preview.status, 0, preview.stderr);
-    assert.match(preview.stdout, /imported=127.0.0.1, imported-2=192.0.2.1/);
-    assert.match(preview.stdout, /active: none \(disabled\); enable selects: imported/);
+    assert.match(preview.stdout, /example.test — READY\n {2}Targets:\n {4}imported=127.0.0.1\n/);
+    assert.match(preview.stdout, / {4}imported-2=192.0.2.1\n {2}Hosts:\n/);
+    assert.match(preview.stdout, / {2}Active: none \(disabled\)\n {2}Enable selects: imported/);
     assert.doesNotMatch(preview.stdout, /Target name for/);
     assert.equal(await readFile(f.path, 'utf8'), f.source);
     /** Explicit non-interactive selection accepts default names without prompts. */
@@ -109,7 +110,9 @@ for (const selection of [['--all'], ['--group', 'example.test'], []]) {
         assert.equal(result.code, 0, result.errors);
         assert.equal(result.steps, steps.length);
         assert.match(result.output, /Migration summary:/);
-        assert.match(result.output, /imported=127.0.0.1, lab=192.0.2.1/);
+        assert.match(result.output, /Migration summary:\nexample.test\n {2}Targets:\n/);
+        assert.match(result.output, / {4}imported=127.0.0.1\n {4}lab=192.0.2.1\n/);
+        assert.match(result.output, / {2}Active: imported \(enabled\)/);
         /** Final active target must use the accepted default for the effective IP. */
         const parsed = parse(await readFile(f.path, 'utf8'));
         assert.equal(parsed.document.groups[0].activeTarget, 'imported');
@@ -153,9 +156,27 @@ test('CLI conflicts identify outside rules and preserve the complete source', as
     const result = spawnSync(process.execPath,
         [entry, '--hosts-file', f.path, 'migrate', '--all'], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /SKIP: Multiple effective/);
-    assert.match(result.stdout, /line 1: 192.0.2.1 www.example.test/);
-    assert.match(result.stdout, /line 2: 192.0.2.2 api.example.test/);
+    assert.match(result.stdout, /example.test — SKIP\n {2}Reason: Multiple effective/);
+    assert.match(result.stdout, / {4}Line 1 {2}192.0.2.1 {2}www.example.test {2}\[effective\]/);
+    assert.match(result.stdout, / {4}Line 2 {2}192.0.2.2 {2}api.example.test {2}\[effective\]/);
+    assert.match(result.stdout, /Action: Keep one effective IP/);
+    assert.doesNotMatch(result.stdout, /Targets:|Hosts:|Active:|Enable selects:|imported=/);
     assert.match(result.stdout, /No eligible imports; no changes/);
+    assert.equal(await readFile(f.path, 'utf8'), f.source);
+});
+
+test('migration blocks separate groups and list each original source line only once', async t => {
+    /** Mixed ready and skipped proposals exercise block boundaries and alias diagnostic grouping. */
+    const f = await fixture(t, '#127.0.0.1 www.ready.test\n'
+        + '192.0.2.1 www.skipped.test api.skipped.test www.skipped.test\n'
+        + '192.0.2.2 iot.skipped.test\n#192.0.2.3 lab.skipped.test\n');
+    /** Dry-run renders source details without conflating a skipped proposal with disabled state. */
+    const preview = spawnSync(process.execPath,
+        [entry, '--hosts-file', f.path, 'migrate', '--dry-run'], { encoding: 'utf8' });
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.match(preview.stdout, /Enable selects: imported\n\nskipped.test — SKIP/);
+    assert.equal(preview.stdout.match(/Line 2 /g).length, 1);
+    assert.match(preview.stdout, /Line 2 {2}192.0.2.1 {2}www.skipped.test, api.skipped.test {2}\[effective\]/);
+    assert.match(preview.stdout, /Line 4 {2}192.0.2.3 {2}lab.skipped.test {2}\[commented\]/);
     assert.equal(await readFile(f.path, 'utf8'), f.source);
 });

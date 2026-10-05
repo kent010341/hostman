@@ -4,7 +4,7 @@ import {
     type Group, type HostmanDocument, type Target
 } from '#hostman/domain/model';
 import {
-    candidates, importedName, parse, removeImported, serialize, type Candidate, type CandidateTarget
+    candidates, importedName, migrationFailure, parse, removeImported, serialize, type Candidate, type CandidateTarget
 } from '#hostman/hosts/document';
 /** A user-selected name for a newly imported semantic IP target. */
 export type MigrationTargetName = {
@@ -285,7 +285,7 @@ export function transform(text: string, operation: Operation): string {
             }
         }
         if (chosen.some(c => c.reason)) {
-            throw new HostmanError(chosen.filter(c => c.reason).map(c => `${c.group}: ${c.reason}`).join('\n'));
+            throw new HostmanError(chosen.filter(c => c.reason).map(migrationFailure).join('\n'));
         }
         /** Naming payload is untrusted when received through the helper protocol. */
         const payload: unknown = operation.targetNames === undefined ? [] : operation.targetNames;

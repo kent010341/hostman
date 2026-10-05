@@ -47,6 +47,8 @@ One effective IP enables the new group and selects that target. Commented-only g
 
 Run `hostman migrate` again whenever you add more rules manually. Multiple effective IPs or conflicts with
 an existing group's active IP are skipped with source details; fix those rules before trying again.
+The preview uses a separate READY or SKIP block for each group. Skipped groups show the reason and original
+source line numbers, while eligible groups list their targets, hostnames and proposed active state.
 
 ### Starting a new project?
 

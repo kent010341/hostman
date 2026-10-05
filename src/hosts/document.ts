@@ -435,9 +435,19 @@ export type Candidate = {
     activeTarget: string;
     /** All source occurrences for diagnostics. */
     sources: MigrationSource[];
-    /** Explanation when the complete group must be skipped. */
+    /** Concise explanation when the complete group must be skipped; sources remain structured. */
     reason?: string;
 };
+/**
+ * Describe a rejected proposal with source details for domain and helper errors.
+ * @param candidate Rejected migration proposal with structured source occurrences.
+ * @returns Error description identifying the group, reason and relevant original rules.
+ */
+export function migrationFailure(candidate: Candidate): string {
+    return `${candidate.group}: ${candidate.reason} Sources: ${candidate.sources.map(source =>
+        `line ${source.line}: ${source.ip} ${source.host} (${source.enabled ? 'effective' : 'commented'})`)
+        .join('; ')}`;
+}
 /**
  * Choose the first available deterministic imported target name.
  * @param used Names already reserved within the group.
@@ -533,8 +543,7 @@ export function candidates(parsed: ParseResult): Candidate[] {
             enabled: group?.enabled ?? effective.size === 1,
             activeTarget: group?.activeTarget ?? selected.name,
             sources: list,
-            reason: reason ? `${reason} Sources: ${list.map(x =>
-                `line ${x.line}: ${x.ip} ${x.host} (${x.enabled ? 'effective' : 'commented'})`).join('; ')}` : undefined
+            reason
         };
     }).sort((a, b) => a.group.localeCompare(b.group, 'en'));
 }

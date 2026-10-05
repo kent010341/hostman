@@ -19,6 +19,7 @@
 | --- | --- |
 | `src/cli/index.ts` | Command tree, global options, prompts, menu, previews, and orchestration |
 | `src/cli/hints.ts` | Pure contextual suggestions, related help, failure guidance, and shell quoting |
+| `src/cli/migration.ts` | Pure multi-line migration proposal and final-summary formatting |
 | `src/domain/model.ts` | Targets, groups, documents, validation, IP comparison, and semantic digests |
 | `src/domain/operations.ts` | Operation union, pure domain mutations, and validated text transformation |
 | `src/hosts/document.ts` | Marker parsing, source spans, serialization, migration candidates and removal |
@@ -124,6 +125,10 @@ hostman repair [group] [--strategy restore | keep]
 - Every interactive import, including `--all` and `--group`, prompts for each new target name with a default.
   Scripts and dry runs use deterministic defaults. Existing names and accepted names remain reserved within
   the group. Prompting finishes before summary, confirmation when required, and any write or elevation.
+- Migration previews use separate multi-line READY/SKIP blocks per group. READY blocks and final summaries
+  list targets, hosts and active state separately. SKIP blocks show the reason, source rules sorted by original
+  line number with same-line aliases combined, and an action; they omit hypothetical targets and active state.
+  Candidate reasons and source occurrences remain separate; domain/helper errors retain source diagnostics.
 - Compatible existing groups merge hosts and missing targets without changing enabled state, active target,
   existing definitions or global references. Matching IPs reuse the active target first, then the first
   matching existing target. Enabled groups require matching effective input; disabled groups only accept

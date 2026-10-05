@@ -94,9 +94,12 @@ test('multiple effective IPs skip the entire group and identify conflicting sour
     /** Disjoint hostname sets still cannot represent per-host active IPs. */
     const source = '192.0.2.1 www.example.test\n192.0.2.2 api.example.test\n';
     assert.match(candidates(parse(source))[0].reason, /Multiple effective/);
-    assert.match(candidates(parse(source))[0].reason, /line 1: 192.0.2.1 www.example.test/);
-    assert.match(candidates(parse(source))[0].reason, /line 2: 192.0.2.2 api.example.test/);
-    assert.throws(() => migrate(source), /Multiple effective/);
+    assert.deepEqual(candidates(parse(source))[0].sources, [
+        { line: 1, ip: '192.0.2.1', host: 'www.example.test', enabled: true },
+        { line: 2, ip: '192.0.2.2', host: 'api.example.test', enabled: true }
+    ]);
+    assert.throws(() => migrate(source), /Multiple effective.*line 1: 192.0.2.1 www.example.test/);
+    assert.throws(() => migrate(source), /line 2: 192.0.2.2 api.example.test/);
 });
 
 test('partial commented aliases preserve prefix, whitespace, unselected hosts and inline comments', () => {
