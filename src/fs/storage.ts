@@ -225,7 +225,12 @@ export async function commit(request: CommitRequest, options: WriterOptions = {}
         await unlink(lock);
     }
 }
+/**
+ * Validate the transaction envelope before replaying a supported domain operation.
+ * @param request Complete request carrying source and approved result digests.
+ */
 function checkRequest(request: CommitRequest): void {
+    /** Operation kinds supported by both normal writers and the commit helper. */
     const kinds = [
         'init',
         'migrate',
@@ -238,9 +243,11 @@ function checkRequest(request: CommitRequest): void {
         'use',
         'target-add',
         'target-set',
+        'target-rename',
         'target-remove',
         'global-add',
         'global-set',
+        'global-rename',
         'global-remove',
         'repair'
     ];

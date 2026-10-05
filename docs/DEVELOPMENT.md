@@ -42,6 +42,10 @@ helper replay. Windows tests perform real file replacement and ACL checks. Unix 
 symlinks when run on Unix. No CI workflow is tracked in this checkout; run the checks on each target platform
 before claiming cross-platform validation.
 
+`test/rename.test.mjs` covers group and global target renaming, active selection and reference preservation,
+disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive target selection and
+selection/naming cancellation, and compiled helper replay.
+
 On Windows, `npm run smoke:elevation` protects a disposable directory and requests actual UAC elevation.
 Accept the dialog to verify the privileged helper. The script restores permissions and removes the fixture.
 Run it from an unelevated terminal. Actual Unix `sudo` authentication requires a separate manual check.
