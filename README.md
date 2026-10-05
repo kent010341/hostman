@@ -3,6 +3,9 @@
 Manage project hostnames together and switch them between local, lab, or production IPs.
 For example, switch both `foo.test` and `api.foo.test` to another environment with one command.
 
+**New here or unsure what to do? Just run `hostman`.** Its interactive menu is the recommended way to get
+started: choose an action and follow the prompts without memorizing commands.
+
 ## Install
 
 You need **Node.js 24 or newer** and npm. Hostman runs on Windows, Linux, and macOS.
@@ -28,6 +31,22 @@ hostman --help
 To uninstall, run `npm uninstall --global hostman`.
 
 ## Get started
+
+### Start with the interactive menu (recommended)
+
+After installation, open a terminal and run:
+
+```sh
+hostman
+```
+
+The menu lets you initialize management, import existing rules, manage groups and hostnames, switch targets,
+and more. Select an action, then follow its prompts for the required inputs.
+You can return to this menu whenever you are unsure which command to use.
+
+The command examples below provide direct alternatives for common workflows. Commands also prompt for
+missing inputs in an interactive terminal. Without interactive input and output, `hostman` shows help instead
+of the menu; scripts must supply complete command arguments.
 
 ### Already have custom hosts rules?
 
@@ -69,8 +88,6 @@ The final command switches both names to the lab IP. Replace the example domain 
 Without `--host`, `add group` includes the root hostname (`foo.test`) automatically. To choose the initial
 hostnames explicitly, use `--host @ --host api` for the root and `api.foo.test`, or `--host api` for only
 `api.foo.test`.
-
-For a guided menu, run `hostman` without a command. Commands also prompt for missing inputs in a terminal.
 
 **Permissions:** when writing system hosts, an interactive terminal may show Windows UAC or request your
 `sudo` password. Approve it to save the changes; cancelling leaves the file unchanged.
