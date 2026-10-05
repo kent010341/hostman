@@ -195,7 +195,7 @@ hostman repair [group] [--strategy restore | keep]
 - Tests must use temporary hosts fixtures and injected elevation launchers, never the real system hosts.
   Simulated TTY tests exercise real Inquirer inputs, target naming, cancellation and final confirmation.
   Compiled helper tests verify custom-name replay and invalid-name rejection. They do not prove actual UAC
-  or sudo authentication. User-facing manual fixtures and cleanup are in docs/MIGRATION-TESTING.md.
+  or sudo authentication.
 - For permission changes, validate actual elevation separately against disposable protected fixtures when
   the platform is available. `npm run smoke:elevation` is the Windows UAC check from an unelevated terminal.
   Report unavailable Unix sudo, symlink, or metadata checks; do not claim cross-platform validation from one OS.

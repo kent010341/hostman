@@ -47,7 +47,6 @@ One effective IP enables the new group and selects that target. Commented-only g
 
 Run `hostman migrate` again whenever you add more rules manually. Multiple effective IPs or conflicts with
 an existing group's active IP are skipped with source details; fix those rules before trying again.
-For copyable fixtures and expected results, see the [manual migration checks](docs/MIGRATION-TESTING.md).
 
 ### Starting a new project?
 

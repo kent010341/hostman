@@ -36,7 +36,7 @@ migration, CLI help/lifecycle, transaction failures, request tampering, and inje
 include real Inquirer input driven through simulated TTY pipes, cancellation, custom target names and compiled
 helper replay. Windows tests perform real file replacement and ACL checks. Unix tests cover mode/ownership and
 symlinks when run on Unix. No CI workflow is tracked in this checkout; run the checks on each target platform
-before claiming cross-platform validation. See [manual migration checks](MIGRATION-TESTING.md) for user fixtures.
+before claiming cross-platform validation.
 
 On Windows, `npm run smoke:elevation` protects a disposable directory and requests actual UAC elevation.
 Accept the dialog to verify the privileged helper. The script restores permissions and removes the fixture.

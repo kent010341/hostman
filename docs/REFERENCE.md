@@ -61,7 +61,6 @@ Edit conflicting outside rules before retrying; `repair` is for damaged managed 
 
 Selected hostname tokens move into management in one transaction. Unselected aliases retain their IP, spacing,
 comment prefix and inline comments. If every alias on a line is imported, its inline comment remains separately.
-See [manual migration checks](MIGRATION-TESTING.md) for fixtures, commands and cleanup steps.
 
 ## Groups and targets
 
