@@ -145,6 +145,7 @@ hostman remove host foo.test admin
 ```
 
 Use `@` for `foo.test`, `api` for `api.foo.test`, or a full name such as `admin.foo.test`.
+In an interactive terminal, omit the hostname from `remove host` to select a full hostname from the group's list.
 
 ### Temporarily turn a project off
 
@@ -174,6 +175,8 @@ hostman add group example.com --active '@local' --host '@' --host api
 ```
 
 Group targets created with `target add/set` or `--target name=IP` accept literal IPs only.
+Omit the existing target name from `target set` or `global set` in an interactive terminal to select its name
+and IP from a list before entering the replacement IP. New target names still use text input.
 
 ### Remove a target or project
 
@@ -186,6 +189,9 @@ hostman remove group foo.test
 Switch away from a target before removing it. Removing a group deletes its managed hosts and target definitions.
 Remove a global with `hostman global remove <name>` after switching every group selecting it to another
 destination. Disabled groups also retain their selection and prevent removal.
+Omit the target name from `target remove` or `global remove` in an interactive terminal to select from a list.
+Protected targets remain visible but disabled, with their active selection or referencing groups shown.
+If no target can be removed, the command explains how to switch selections first.
 
 ### Resolve changes made by hand
 

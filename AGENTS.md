@@ -35,6 +35,7 @@
 | `test/hints.test.mjs` | State-aware suggestions, recovery guidance, and cross-shell argument quoting |
 | `test/storage.test.mjs`, `test/acl.ps1` | Transactions, concurrency, metadata, encoding, and elevation |
 | `test/rename.test.mjs` | Target renaming, active selections, global references, CLI and helper replay |
+| `test/selection.test.mjs` | Existing-item menus, scope isolation, deletion restrictions and cancellation |
 
 | Task | Inspect first |
 | --- | --- |
@@ -108,6 +109,13 @@ hostman repair [group] [--strategy restore | keep]
   clean state are byte-stable; affected conflicts block renames and valid manual hostname additions survive.
 - Next-step hints appear only when stdin and stdout are terminals and hints are enabled. `--no-hints`
   suppresses them, including from the menu. Scripts omit hints automatically.
+- Interactive `remove host` selects an omitted hostname from its group's full hostname list, including root
+  and disabled-group hostnames. `target set/remove` and `global set/remove` select omitted existing names
+  from their own scope, displaying names and IPs in definition order. Group operations select an omitted
+  group first. Explicit arguments skip selection; scripts require complete arguments. New names use text input.
+  Removal lists show but disable active group targets and referenced globals, including disabled-group
+  references, explaining why. Empty or entirely protected lists fail with actionable guidance before prompting.
+  Selection, replacement IP input and cancellation finish before any transaction write.
 - Suggestions use actual names and resulting state, avoid existing suggested hostname/target names, retain
   the resolved custom source path, and quote arguments for PowerShell or Unix shells. Disabled groups need
   enabling; healthy nonempty `show` results need no hints. Failures suggest recovery without reporting success.
@@ -220,6 +228,8 @@ hostman repair [group] [--strategy restore | keep]
   Simulated TTY tests exercise real Inquirer inputs, target naming, cancellation and final confirmation.
   Compiled helper tests verify custom-name replay and invalid-name rejection. They do not prove actual UAC
   or sudo authentication.
+  Existing-item selection tests also cover scope isolation, disabled deletion choices, empty/protected lists
+  and byte preservation throughout prompts and cancellation.
 - Direct global regression coverage includes empty group targets, same-named local/global selections,
   disabled deletion protection, affected conflicts, semantic migration reuse, repair restrictions,
   simulated TTY selection/cancellation and compiled helper replay.
