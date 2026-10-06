@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -35,11 +36,12 @@ async function fixture(t, source) {
 /**
  * Drive real Inquirer prompts by responding after each expected prompt becomes visible.
  * @param {object} f Disposable source and TTY preload paths.
- * @param {string[]} args Migration arguments.
+ * @param {string[]} args CLI arguments.
  * @param {object[]} steps Expected prompt substrings and input keystrokes.
+ * @param {string} expectedSource Optional source bytes asserted before each prompt response.
  * @returns {Promise<object>} Process result and captured terminal output.
  */
-function interactive(f, args, steps) {
+function interactive(f, args, steps, expectedSource) {
     return new Promise((resolveResult, reject) => {
         /** CLI process with real prompt handling and simulated terminal detection. */
         const child = spawn(process.execPath,
@@ -58,6 +60,16 @@ function interactive(f, args, steps) {
         child.stdout.on('data', value => {
             output += value.toString();
             if (index < steps.length && output.includes(steps[index].prompt)) {
+                if (expectedSource !== undefined) {
+                    try {
+                        assert.equal(readFileSync(f.path, 'utf8'), expectedSource);
+                    } catch (error) {
+                        child.kill();
+                        clearTimeout(timer);
+                        reject(error);
+                        return;
+                    }
+                }
                 child.stdin.write(steps[index].keys);
                 index++;
             }
@@ -73,6 +85,100 @@ function interactive(f, args, steps) {
         });
     });
 }
+
+test('add group offers globals first and manual entry last without changing explicit arguments', async t => {
+    /** Initialized source with two globals in definition order. */
+    const source = transform(transform(transform('', { kind: 'init' }), {
+        kind: 'global-add', name: 'local', ip: '192.0.2.1'
+    }), { kind: 'global-add', name: 'office', ip: '192.0.2.2' });
+    for (const [args, steps, active, targets, hosts, enabled] of [
+        [['add', 'group'],
+            [{ prompt: 'Two-label group root', keys: 'example.test\r' },
+                { prompt: 'Initial target', keys: '\r' }], '@local', [], ['example.test'], true],
+        [['add', 'group', 'example.test'],
+            [{ prompt: 'Initial target', keys: '\r' }], '@local', [], ['example.test'], true],
+        [['add', 'group', 'example.test', '--disabled', '--host', 'api'],
+            [{ prompt: 'Initial target', keys: '\u001b[B\r' }],
+            '@office', [], ['api.example.test'], false],
+        [['add', 'group', 'example.test'],
+            [{ prompt: 'Initial target', keys: '\u001b[A\r' },
+                { prompt: 'Initial target name', keys: 'lab\r' },
+                { prompt: 'IP address', keys: '\u001b[A\r' },
+                { prompt: 'IP address', keys: '192.0.2.9\r' }],
+            'lab', [{ name: 'lab', ip: '192.0.2.9' }], ['example.test'], true],
+        [['add', 'group', 'example.test', '--target', 'lab=192.0.2.9'],
+            [], 'lab', [{ name: 'lab', ip: '192.0.2.9' }], ['example.test'], true],
+        [['add', 'group', 'example.test', '--active', '@office'],
+            [], '@office', [], ['example.test'], true]
+    ]) {
+        /** Fresh fixture isolates each independent creation path. */
+        const f = await fixture(t, source);
+        /** Prompt responses verify that source bytes stay unchanged throughout input. */
+        const result = await interactive(f, args, steps, source);
+        assert.equal(result.code, 0, result.errors);
+        assert.equal(result.steps, steps.length);
+        /** Saved group distinguishes global selection from a same-named literal target. */
+        const group = parse(await readFile(f.path, 'utf8')).document.groups[0];
+        assert.equal(group.activeTarget, active);
+        assert.deepEqual(group.targets, targets);
+        assert.deepEqual(group.hosts, hosts);
+        assert.equal(group.enabled, enabled);
+        if (steps.length) {
+            assert.ok(result.output.indexOf('@local (global, 192.0.2.1)')
+                < result.output.indexOf('@office (global, 192.0.2.2)'));
+            assert.ok(result.output.indexOf('@office (global, 192.0.2.2)')
+                < result.output.indexOf('Enter a new group target'));
+        } else {
+            assert.doesNotMatch(result.output, /Initial target/);
+        }
+        if (active.startsWith('@')) {
+            assert.doesNotMatch(result.output, /Initial target name|\? IP address/);
+        }
+    }
+});
+
+test('add group manual fallback and cancellation preserve bytes; scripts require explicit destinations', async t => {
+    /** Existing globals must not become automatic script destinations. */
+    const source = transform(transform('', { kind: 'init' }), {
+        kind: 'global-add', name: 'local', ip: '192.0.2.1'
+    });
+    for (const steps of [
+        [{ prompt: 'Initial target', keys: '\u0003' }],
+        [{ prompt: 'Initial target', keys: '\u001b[A\r' },
+            { prompt: 'Initial target name', keys: '\u0003' }],
+        [{ prompt: 'Initial target', keys: '\u001b[A\r' },
+            { prompt: 'Initial target name', keys: '\r' },
+            { prompt: 'IP address', keys: '\u0003' }]
+    ]) {
+        /** Every cancellation starts from unchanged initialized source. */
+        const f = await fixture(t, source);
+        /** Cancelled prompts must never create a partial group. */
+        const result = await interactive(f, ['add', 'group', 'example.test'], steps, source);
+        assert.equal(result.steps, steps.length);
+        assert.equal(await readFile(f.path, 'utf8'), source);
+    }
+    /** No globals still offers the manual destination option as the only menu item. */
+    const empty = transform('', { kind: 'init' });
+    /** Fresh source contains no shared definitions. */
+    const f = await fixture(t, empty);
+    /** Manual entry retains the historical local-name default after explicit selection. */
+    const created = await interactive(f, ['add', 'group', 'example.test'], [
+        { prompt: 'Enter a new group target', keys: '\r' },
+        { prompt: 'Initial target name', keys: '\r' },
+        { prompt: 'IP address', keys: '\u001b[A\r' },
+        { prompt: 'IP address', keys: '192.0.2.9\r' }
+    ], empty);
+    assert.equal(created.code, 0, created.errors);
+    assert.deepEqual(parse(await readFile(f.path, 'utf8')).document.groups[0].targets,
+        [{ name: 'local', ip: '192.0.2.9' }]);
+    await writeFile(f.path, source);
+    /** Non-terminal invocations must supply destination arguments despite available globals. */
+    const incomplete = spawnSync(process.execPath,
+        [entry, '--hosts-file', f.path, 'add', 'group', 'example.test'], { encoding: 'utf8' });
+    assert.equal(incomplete.status, 1);
+    assert.match(incomplete.stderr, /required/);
+    assert.equal(await readFile(f.path, 'utf8'), source);
+});
 
 for (const cancel of [false, true]) {
     test(`TTY target selection exposes direct globals: cancel=${cancel}`, async t => {

@@ -245,10 +245,12 @@ function checkRequest(request: CommitRequest): void {
         'target-set',
         'target-rename',
         'target-remove',
+        'target-clean',
         'global-add',
         'global-set',
         'global-rename',
         'global-remove',
+        'global-clean',
         'repair'
     ];
     if (!request || request.version !== 1

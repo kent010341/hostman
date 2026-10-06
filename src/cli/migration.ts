@@ -1,4 +1,5 @@
-import type { Group } from '#hostman/domain/model';
+import { ipKey, type Group } from '#hostman/domain/model';
+import type { CleanChoice } from '#hostman/domain/cleaning';
 import type { Candidate, MigrationSource } from '#hostman/hosts/document';
 
 /**
@@ -7,7 +8,7 @@ import type { Candidate, MigrationSource } from '#hostman/hosts/document';
  * @param targets Display-ready target definitions.
  * @param hosts Hostname union.
  * @param enabled Whether the resulting group contributes effective mappings.
- * @param activeTarget Stored active selection, including the selection used by a later enable.
+ * @param activeTarget Stored active selection, or empty when a global choice remains pending.
  * @returns A readable group block without terminal control sequences.
  */
 function groupBlock(
@@ -23,20 +24,32 @@ function groupBlock(
         ...targets.map(target => `    ${target}`),
         '  Hosts:',
         ...hosts.map(host => `    ${host}`),
-        `  Active: ${enabled ? `${activeTarget} (enabled)` : 'none (disabled)'}`,
-        ...enabled ? [] : [`  Enable selects: ${activeTarget}`]
+        `  Active: ${enabled ? `${activeTarget || 'pending selection'} (enabled)` : 'none (disabled)'}`,
+        ...enabled ? [] : [`  Enable selects: ${activeTarget || 'pending selection'}`]
     ].join('\n');
 }
 
 /**
  * Format a source-derived proposal, putting skip reasons before source diagnostics.
  * @param candidate Current migration proposal, including structured original source occurrences.
+ * @param globals Validated global choices applied to preview display without altering the proposal.
  * @returns A READY block or SKIP block with one diagnostic entry per source line.
  */
-export function formatMigrationCandidate(candidate: Candidate): string {
+export function formatMigrationCandidate(candidate: Candidate, globals: CleanChoice[] = []): string {
     if (!candidate.reason) {
-        return groupBlock(`${candidate.group} — READY`, candidate.targets.map(t => `${t.name}=${t.ip}`),
-            candidate.hosts, candidate.enabled, candidate.activeTarget);
+        /** New groups select the effective destination or the first commented destination. */
+        const source = candidate.sources.find(source => source.enabled) ?? candidate.sources[0];
+        /** Explicit global choice can resolve an otherwise pending active selection in the preview. */
+        const selected = globals.find(choice => ipKey(choice.ip) === ipKey(source.ip))?.selected;
+        return groupBlock(`${candidate.group} — READY`, candidate.targets.map(target => {
+            /** Selected global name for this new destination, if one has been supplied. */
+            const global = target.globals
+                ? globals.find(choice => ipKey(choice.ip) === ipKey(target.ip))?.selected : undefined;
+            /** Resolved name or a pending display listing every eligible global. */
+            const name = global ? `@${global}` : target.name;
+            return name ? `${name}=${target.ip}`
+                : `pending selection (${target.globals!.map(name => `@${name}`).join(', ')})=${target.ip}`;
+        }), candidate.hosts, candidate.enabled, candidate.activeTarget || (selected ? `@${selected}` : ''));
     }
     /** Occurrences grouped by original line, preserving every relevant alias without repeated entries. */
     const sources = new Map<number, MigrationSource[]>();

@@ -404,14 +404,16 @@ export function serialize(
     }
     return output;
 }
-/** An IP target either reused from a managed group or proposed for creation. */
+/** An IP destination reused from a group/global, pending global selection, or proposed for creation. */
 export type CandidateTarget = {
-    /** Existing or default target name. */
+    /** Existing/default local name, @global selection, or empty while a global choice is pending. */
     name: string;
     /** First source spelling of this semantic IP. */
     ip: string;
     /** Whether migration must create a group-owned target. */
     create: boolean;
+    /** Available globals for a new destination, absent when a group definition is reused. */
+    globals?: string[];
 };
 /** A hostname occurrence retained for actionable migration diagnostics. */
 export type MigrationSource = {
@@ -535,6 +537,12 @@ export function candidates(parsed: ParseResult): Candidate[] {
             }
             /** Existing target resolving to this candidate IP. */
             const existing = reusable.find(t => ipKey(resolveTarget(parsed.document, group!, t.name)) === key);
+            /** Shared definitions reused only when no existing group destination matches. */
+            const globals = existing ? [] : parsed.document.globals.filter(t => ipKey(t.ip) === key);
+            if (globals.length) {
+                return { name: globals.length === 1 ? `@${globals[0].name}` : '', ip: ips.get(key)!,
+                    create: false, globals: globals.map(t => t.name) };
+            }
             /** Name reserved for either a reused target or a new literal target. */
             const targetName = existing?.name ?? importedName(used);
             used.add(targetName);

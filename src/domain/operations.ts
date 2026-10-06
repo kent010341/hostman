@@ -6,6 +6,9 @@ import {
 import {
     candidates, importedName, migrationFailure, parse, removeImported, serialize, type Candidate, type CandidateTarget
 } from '#hostman/hosts/document';
+import {
+    globalCleanPlan, requireChoices, selectChoices, targetCleanPlan, type CleanChoice
+} from '#hostman/domain/cleaning';
 /** A user-selected name for a newly imported semantic IP target. */
 export type MigrationTargetName = {
     /** Group receiving the target. */
@@ -15,7 +18,7 @@ export type MigrationTargetName = {
     /** Valid target name unique within the group. */
     name: string;
 };
-/** Replayable domain mutation, including optional migration target names. */
+/** Replayable domain mutation, including validated migration naming and cleanup selection payloads. */
 export type Operation = {
     kind: 'init';
 } | {
@@ -24,6 +27,22 @@ export type Operation = {
     groups: string[];
     /** Optional names collected before any write or elevation. */
     targetNames?: MigrationTargetName[];
+    /** Global destinations chosen for ambiguous new imported IPs. */
+    globalNames?: string[];
+} | {
+    /** Clean local definitions in exactly one group. */
+    kind: 'target-clean';
+    /** Group owning the definitions to clean. */
+    group: string;
+    /** Global destinations chosen before committing. */
+    globalNames?: string[];
+    /** Explicit group=target local retention choices. */
+    keep?: string[];
+} | {
+    /** Remove duplicate global IP definitions and redirect their direct consumers. */
+    kind: 'global-clean';
+    /** One global name retained for each duplicate semantic IP. */
+    keep?: string[];
 } | {
     kind: 'add-group';
     group: Group;
@@ -199,6 +218,47 @@ export function applyOperation(document: HostmanDocument, operation: Operation):
             g.targets = g.targets.filter(t => t.name !== operation.target);
             break;
         }
+        case 'target-clean': {
+            /** Validated source-derived cleanup choices for this owner. */
+            const plan = targetCleanPlan(doc, operation.group, operation.globalNames, operation.keep);
+            requireChoices(plan.globals);
+            /** Owner included in scoped validation and serialization. */
+            const owner = group(operation.group);
+            for (const choice of plan.globals) {
+                /** Local names replaced by the selected shared destination. */
+                const names = owner.targets.filter(target => ipKey(target.ip) === ipKey(choice.ip))
+                    .map(target => target.name);
+                if (names.includes(owner.activeTarget)) {
+                    owner.activeTarget = `@${choice.selected!}`;
+                }
+                owner.targets = owner.targets.filter(target => !names.includes(target.name));
+            }
+            for (const choice of plan.locals) {
+                if (choice.names.includes(owner.activeTarget)) {
+                    owner.activeTarget = choice.selected!;
+                }
+                owner.targets = owner.targets.filter(target => !choice.names.includes(target.name)
+                    || target.name === choice.selected);
+            }
+            break;
+        }
+        case 'global-clean': {
+            /** Duplicate global definitions and validated retention decisions. */
+            const choices = globalCleanPlan(doc, operation.keep);
+            requireChoices(choices);
+            for (const choice of choices) {
+                /** Names removed without changing any literal destination. */
+                const removed = choice.names.filter(name => name !== choice.selected);
+                doc.globals = doc.globals.filter(target => !removed.includes(target.name));
+                for (const owner of doc.groups) {
+                    if (removed.some(name => owner.activeTarget === `@${name}`)) {
+                        owner.activeTarget = `@${choice.selected!}`;
+                        touched.add(owner.name);
+                    }
+                }
+            }
+            break;
+        }
         case 'global-add':
         case 'global-set': {
             const index = doc.globals.findIndex(t => t.name === operation.name);
@@ -315,6 +375,25 @@ export function migrationTargets(
     });
 }
 /**
+ * Reconstruct global choices required by selected migration candidates.
+ * @param selected Source-derived eligible candidates in the selected scope.
+ * @param payload Untrusted explicit global names.
+ * @returns Global reuse choices, including unresolved ambiguous destinations.
+ */
+export function migrationGlobalChoices(selected: Candidate[], payload: unknown = []): CleanChoice[] {
+    /** Each semantic IP shares one decision across the selected import. */
+    const choices = new Map<string, CleanChoice>();
+    for (const candidate of selected) {
+        for (const target of candidate.targets) {
+            if (target.globals) {
+                choices.set(ipKey(target.ip), { ip: target.ip, names: target.globals,
+                    selected: target.globals.length === 1 ? target.globals[0] : undefined });
+            }
+        }
+    }
+    return selectChoices([...choices.values()], payload);
+}
+/**
  * Transform current hosts text through a validated replayable operation.
  * @param text Original selected hosts source.
  * @param operation Requested mutation, including any migration names.
@@ -346,6 +425,24 @@ export function transform(text: string, operation: Operation): string {
         }
         if (chosen.some(c => c.reason)) {
             throw new HostmanError(chosen.filter(c => c.reason).map(migrationFailure).join('\n'));
+        }
+        /** Global choices reconstructed from current source, never caller-supplied IP buckets. */
+        const globalChoices = migrationGlobalChoices(chosen, operation.globalNames);
+        requireChoices(globalChoices);
+        for (const candidate of chosen) {
+            for (const target of candidate.targets) {
+                if (target.globals) {
+                    target.name = `@${globalChoices.find(choice => ipKey(choice.ip) === ipKey(target.ip))!.selected!}`;
+                    if (!parsed.document.groups.some(group => group.name === candidate.group)
+                        && candidate.activeTarget === '') {
+                        /** Selected IP was left unresolved by the source-only proposal. */
+                        const effective = candidate.sources.find(source => source.enabled) ?? candidate.sources[0];
+                        if (ipKey(effective.ip) === ipKey(target.ip)) {
+                            candidate.activeTarget = target.name;
+                        }
+                    }
+                }
+            }
         }
         /** Naming payload is untrusted when received through the helper protocol. */
         const payload: unknown = operation.targetNames === undefined ? [] : operation.targetNames;
@@ -396,7 +493,7 @@ export function transform(text: string, operation: Operation): string {
                     name: candidate.group,
                     enabled: candidate.enabled,
                     activeTarget: targets.find(t => ipKey(t.ip) === ipKey(active.ip))!.name,
-                    targets: targets.map(t => ({ name: t.name, ip: t.ip })),
+                    targets: targets.filter(t => t.create).map(t => ({ name: t.name, ip: t.ip })),
                     hosts: candidate.hosts
                 });
             }
@@ -409,10 +506,15 @@ export function transform(text: string, operation: Operation): string {
     const affected = 'group' in operation
         ? typeof operation.group === 'string' ? operation.group : operation.group.name
         : undefined;
+    /** Removed global selections define the cleanup's affected group scope. */
+    const removedGlobals = operation.kind === 'global-clean'
+        ? globalCleanPlan(parsed.document, operation.keep).flatMap(choice =>
+            choice.names.filter(name => name !== choice.selected)) : [];
     /** Global mutations also validate groups directly selecting the shared destination. */
     const hasAffectedConflict = parsed.conflicts.some(c => !c.group || c.group === affected
         || (!affected && parsed.document.groups.some(g => g.name === c.group
-            && 'name' in operation && g.activeTarget === `@${operation.name}`)));
+            && ('name' in operation && g.activeTarget === `@${operation.name}`
+                || removedGlobals.some(name => g.activeTarget === `@${name}`)))));
     if (operation.kind !== 'repair' && hasAffectedConflict) {
         throw new HostmanError('Conflicted scope. Run hostman repair before mutation.');
     }

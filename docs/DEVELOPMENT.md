@@ -42,9 +42,19 @@ helper replay. Windows tests perform real file replacement and ACL checks. Unix 
 symlinks when run on Unix. No CI workflow is tracked in this checkout; run the checks on each target platform
 before claiming cross-platform validation.
 
+`test/migration-cli.test.mjs` also covers global-first initial group destinations, the final manual-entry option,
+no-global fallback, explicit destination bypass, disabled groups, explicit hosts and cancellation. Simulated
+TTY tests verify source bytes before supplying creation responses. Initial destination selection uses the same
+source snapshot as the eventual transaction; all name/IP prompts remain in the unelevated CLI process.
+
 `test/rename.test.mjs` covers group and global target renaming, literal target and direct active selection preservation,
 disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive target selection and
 selection/naming cancellation, and compiled helper replay.
+
+`test/cleaning.test.mjs` covers single-group global reuse and local deduplication, global-only deduplication and
+consumer redirects, IPv6 equivalence, enabled/disabled selections, invalid choices, scope conflicts, manual
+additions, pending dry runs, scripts, Inquirer selection/cancellation, migration global reuse and compiled helper
+replay. Every fixture is disposable; these subprocess tests do not prove actual privilege authentication.
 
 `test/selection.test.mjs` drives actual Inquirer menus through simulated TTY pipes for hostname removal and
 group/global target updates and removal. It covers scope isolation, disabled deletion choices, disabled-group
@@ -75,7 +85,14 @@ Group destinations contain only `{ name, ip }` literal targets. The active selec
 name or `@global-name`; direct global selection requires no group target definition. Empty target lists are
 valid when a global is selected. Parsing, validation, serialization, migration, repair and helper replay use
 the same resolver. Global updates serialize only enabled consumers, while disabled selections still prevent
-global deletion. Migration reuses a semantically matching active global before considering group targets.
+global deletion. Migration reuses an existing active destination first, then group targets; previously missing
+destinations reuse matching globals before creating literal targets. Existing definitions are not cleaned during
+migration. Multiple global matches require source-validated choices before transaction preparation.
+`src/domain/cleaning.ts` provides pure semantic IP buckets, relevant-choice validation and cleanup proposals.
+`src/cli/cleaning.ts` resolves terminal choices and formats pending previews without filesystem I/O.
+Single-group cleanup replaces matching local definitions with globals and deduplicates remaining local IPs.
+Global cleanup only deduplicates globals and redirects direct consumers, including disabled groups. New
+`target-clean` and `global-clean` operations share normal transaction validation and helper replay.
 The v1 markers and semantic digest structure remain unchanged; there is no compatibility or conversion layer
 for the former `# target alias=@global` format.
 
@@ -98,8 +115,11 @@ using Windows UAC or Unix
 `sudo`. Its versioned request includes the resolved path, source digest, fully specified operation, and result
 digest. The helper validates the request hash, rereads the source, reapplies the domain operation, and verifies
 the expected output before committing. Migration operations may include target naming overrides by group and IP;
-the helper recalculates proposals and validates these names without prompting. A change while authentication is
-pending cancels the commit.
+the helper recalculates proposals and validates these names without prompting. Migration and group cleanup can
+carry global-name choices; cleanup operations can carry retained names. These name arrays are untrusted: replay
+reconstructs eligible semantic IP buckets, rejects unrelated or conflicting selections, and requires explicit
+resolution of global ambiguity. Local cleanup defaults retain the active target or first definition. A change
+while authentication is pending cancels the commit.
 
 The original process checks the structured response and resulting file before reporting success. Request
 and result files are removed afterward. Cancellation, denied authentication, and missing tools stop the

@@ -134,6 +134,14 @@ export function formatHints(hints: Hint[], source?: string, platform = process.p
  * @returns Relevant examples, including direct global selection.
  */
 export function relatedHints(key: string): Hint[] {
+    if (key === 'target clean') {
+        return [hint('Preview cleanup for one group:', 'target', 'clean', 'example.com', '--dry-run'),
+            hint('Inspect the retained destinations:', 'show', 'example.com')];
+    }
+    if (key === 'global clean') {
+        return [hint('Preview duplicate globals and their consumers:', 'global', 'clean', '--dry-run'),
+            view('all')];
+    }
     if (key === 'init') {
         return [hint('Import existing rules:', 'migrate', '--dry-run'), create()];
     }

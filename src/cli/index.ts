@@ -8,8 +8,10 @@ import {
     HostmanError, ipKey, resolveTarget, sha256, validName, type Group
 } from '#hostman/domain/model';
 import {
-    transform, type MigrationTargetName, type Operation
+    migrationGlobalChoices, transform, type MigrationTargetName, type Operation
 } from '#hostman/domain/operations';
+import { globalCleanPlan, targetCleanPlan } from '#hostman/domain/cleaning';
+import { choicePreview, finishChoices } from '#hostman/cli/cleaning';
 import { candidates, importedName, parse } from '#hostman/hosts/document';
 import { formatMigrationCandidate, formatMigrationGroup } from '#hostman/cli/migration';
 import { errorHints, formatHints, operationHints, relatedHints, showHints, type Hint } from '#hostman/cli/hints';
@@ -24,12 +26,23 @@ type RootOptions = {
 };
 /** Options controlling migration selection without changing source-derived proposals. */
 type MigrationOptions = {
+    /** Explicit global choices for newly imported destinations. */
+    global: string[];
     /** Explicit group selections, repeatable on the command line. */
     group: string[];
     /** Select every eligible group. */
     all?: boolean;
     /** Preview without prompts or mutations. */
     dryRun?: boolean
+};
+/** Explicit destination choices and read-only preview mode for cleanup commands. */
+type CleanOptions = {
+    /** Global destinations replacing local target definitions. */
+    global: string[];
+    /** Namespace-specific names retained when deduplicating. */
+    keep: string[];
+    /** Preview source-derived choices without prompts or writes. */
+    dryRun?: boolean;
 };
 /** Flags defining initial group destinations, selection and hostnames. */
 type GroupOptions = {
@@ -257,6 +270,39 @@ async function mutate(operation: Operation, snapshot?: Awaited<ReturnType<typeof
     }
     suggest(operationHints(operation, parse(next)), current.path);
 }
+/**
+ * Report actual removals, retained definitions and active redirects from a validated cleanup.
+ * @param original Original snapshot text.
+ * @param operation Fully resolved cleanup operation.
+ */
+function cleanSummary(original: string, operation: Operation): void {
+    /** Original definitions used to identify removed names. */
+    const before = parse(original).document;
+    /** Validated result shared with normal commits and helper replay. */
+    const after = parse(transform(original, operation)).document;
+    console.log('Cleanup summary:');
+    if (operation.kind === 'global-clean') {
+        console.log(`  Removed globals: ${before.globals.filter(target =>
+            !after.globals.some(retained => retained.name === target.name)).map(target => target.name)
+            .join(', ') || 'none'}`);
+        console.log(`  Retained globals: ${after.globals.map(target => `${target.name}=${target.ip}`)
+            .join(', ') || 'none'}`);
+    }
+    for (const owner of after.groups) {
+        /** Previous owner supplies active and local-name changes. */
+        const previous = before.groups.find(group => group.name === owner.name)!;
+        if (operation.kind === 'target-clean' && owner.name === operation.group) {
+            console.log(`  Removed targets: ${previous.targets.filter(target =>
+                !owner.targets.some(retained => retained.name === target.name)).map(target => target.name)
+                .join(', ') || 'none'}`);
+            console.log(`  Retained targets: ${owner.targets.map(target => `${target.name}=${target.ip}`)
+                .join(', ') || 'none'}`);
+            console.log(`  ${owner.name} active: ${previous.activeTarget} -> ${owner.activeTarget}`);
+        } else if (previous.activeTarget !== owner.activeTarget) {
+            console.log(`  ${owner.name} active: ${previous.activeTarget} -> ${owner.activeTarget}`);
+        }
+    }
+}
 command(program,
     'init',
     'Create an empty managed section; repeated runs preserve existing state.',
@@ -274,6 +320,7 @@ command(program,
         'Import every eligible candidate group')
     .option('--dry-run',
         'Preview without prompts, writes, or elevation')
+    .option('--global <name>', 'Choose a matching global target; repeat for different IPs', list, [])
     .action(async (options: MigrationOptions) => {
         /** Source snapshot used for preview, prompting and the eventual digest-checked write. */
         const snapshot = await source();
@@ -285,11 +332,6 @@ command(program,
         for (const conflict of parsed.conflicts) {
             console.log(`CONFLICT${conflict.group ? ` ${conflict.group}` : ''}: ${conflict.message}`);
         }
-        if (found.length) {
-            console.log(found.map(formatMigrationCandidate).join('\n\n'));
-        } else {
-            console.log('No migration candidates.');
-        }
         /** Normalized explicit selections. */
         const requested: string[] = options.group.map((name: string) => name.toLowerCase());
         for (const name of requested) {
@@ -299,7 +341,15 @@ command(program,
         }
         /** Only safe, selected proposals may reach prompting or transformation. */
         const eligible = found.filter(c => !c.reason && (!requested.length || requested.includes(c.group)));
+        /** Flag choices are validated against the current eligible import scope. */
+        const previewGlobals = migrationGlobalChoices(eligible, options.global);
+        if (found.length) {
+            console.log(found.map(candidate => formatMigrationCandidate(candidate, previewGlobals)).join('\n\n'));
+        } else {
+            console.log('No migration candidates.');
+        }
         if (options.dryRun) {
+            console.log(choicePreview(previewGlobals, 'Reuse global').join('\n'));
             console.log(`Eligible: ${eligible.map(c => c.group).join(', ') || 'none'}`);
             suggest(eligible.length ? [{ description: 'Import the groups you select:', args: ['migrate'] }]
                 : migrationRecovery(parsed, found.some(c => c.reason)), snapshot.path);
@@ -328,6 +378,11 @@ command(program,
                 return;
             }
         }
+        /** Final global choices shared by every selected group with that new destination. */
+        const globalNames = await finishChoices(
+            migrationGlobalChoices(eligible.filter(candidate => selected.includes(candidate.group)), options.global),
+            interactive, options.global
+        );
         /** Names collected before the non-interactive commit helper can run. */
         const targetNames: MigrationTargetName[] = [];
         if (interactive) {
@@ -349,7 +404,7 @@ command(program,
             }
         }
         /** Complete replayable operation with source-derived state omitted. */
-        const operation: Operation = { kind: 'migrate', groups: selected, targetNames };
+        const operation: Operation = { kind: 'migrate', groups: selected, targetNames, globalNames };
         /** Validated final document provides an accurate summary after naming. */
         const result = parse(transform(snapshot.text, operation));
         console.log('Migration summary:');
@@ -407,8 +462,8 @@ const add = command(program,
     'add host foo.test api');
 command(add,
     'group [group]',
-    'Create a group with explicit initial targets.',
-    'add group foo.test --target local=127.0.0.1')
+    'Create a group with a shared global or literal initial destination.',
+    'add group example.com --target local=127.0.0.1 --host api')
     .option('--target <name=value>',
         'Initial target IP; repeat to add targets',
         list,
@@ -422,11 +477,30 @@ command(add,
     .option('--disabled',
         'Create a disabled group (default: enabled)')
     .action(async (name: string | undefined, options: GroupOptions) => {
+        /** Normalized root owning the initial hostnames and destinations. */
         const groupName = (await text(name,
             'Two-label group root')).toLowerCase();
         /** Explicit destinations; a direct global selection needs no group targets. */
         let specs: string[] = options.target;
-        if (!specs.length && !options.active?.startsWith('@')) {
+        /** Explicit selection or a global chosen from the initial destination menu. */
+        let activeTarget = options.active;
+        /** Destination choices and eventual commit share the same source snapshot. */
+        let snapshot: Awaited<ReturnType<typeof source>> | undefined;
+        if (interactive && !specs.length && activeTarget === undefined) {
+            snapshot = await source();
+            /** Existing shared destinations offered in their source definition order. */
+            const globals = parse(snapshot.text).document.globals;
+            activeTarget = await select({
+                message: 'Initial target',
+                choices: [
+                    ...globals.map(target => ({
+                        name: `@${target.name} (global, ${target.ip})`, value: `@${target.name}`
+                    })),
+                    { name: 'Enter a new group target', value: '' }
+                ]
+            }) || undefined;
+        }
+        if (!specs.length && !activeTarget?.startsWith('@')) {
             specs = [
                 `${await text(undefined,
                     'Initial target name',
@@ -442,13 +516,15 @@ command(add,
             }
             return { name: spec.slice(0, index), ip: spec.slice(index + 1) };
         });
+        /** Host shorthand expansion uses the same domain rules as later hostname additions. */
         const { expandHost } = await import('#hostman/domain/operations');
+        /** Explicit hosts replace the default group root. */
         const hosts = options.host.length ? options.host : ['@'];
         /** New group retaining either a local destination or direct global selection. */
         const group: Group = {
             name: groupName,
             targets,
-            activeTarget: options.active ?? targets[0].name,
+            activeTarget: activeTarget ?? targets[0].name,
             enabled: !options.disabled,
             hosts: hosts.map((h: string) => expandHost(groupName,
                 h))
@@ -456,7 +532,7 @@ command(add,
         await mutate({
             kind: 'add-group',
             group
-        });
+        }, snapshot);
     });
 const remove = command(program,
     'remove',
@@ -538,6 +614,52 @@ const target = command(program,
     'target',
     'Manage group-owned targets with literal IP addresses.',
     'target add foo.test prod 10.0.0.1');
+command(target,
+    'clean [group]',
+    'Reuse globals and deduplicate literal targets within one group.',
+    'target clean example.com --keep example.com=local')
+    .option('--global <name>', 'Choose a matching global target; repeat for different IPs', list, [])
+    .option('--keep <group=target>', 'Retain a duplicate local target; repeat for different IPs', list, [])
+    .option('--dry-run', 'Preview without prompts, writes, or elevation')
+    .action(async (name: string | undefined, options: CleanOptions) => {
+        if (options.dryRun && !name) {
+            throw new HostmanError('Group is required for target clean --dry-run.');
+        }
+        /** Explicit owner or terminal selection completes before any write. */
+        const group = await chooseGroup(name);
+        /** One source snapshot supplies choices and the eventual transaction digests. */
+        const snapshot = await source();
+        /** Current managed state and validation diagnostics. */
+        const parsed = parse(snapshot.text);
+        /** Source-derived cleanup choices, including unresolved global ambiguity. */
+        const plan = targetCleanPlan(parsed.document, group, options.global, options.keep);
+        // Validate the scope before prompting, without writing or displaying hypothetical selections.
+        transform(snapshot.text, { kind: 'target-clean', group,
+            globalNames: plan.globals.map(choice => choice.selected ?? choice.names[0]), keep: options.keep });
+        console.log(`Source: ${snapshot.path}`);
+        console.log(`Clean targets in ${group}:`);
+        console.log(`  Active: ${parsed.document.groups.find(owner => owner.name === group)!.activeTarget}`);
+        console.log([...choicePreview(plan.globals, 'Reuse global'), ...choicePreview(plan.locals, 'Keep local')]
+            .join('\n') || '  No duplicate targets.');
+        for (const choice of plan.globals) {
+            console.log(`  Replace local targets: ${parsed.document.groups.find(owner => owner.name === group)!
+                .targets.filter(target => ipKey(target.ip) === ipKey(choice.ip)).map(target => target.name)
+                .join(', ')}`);
+        }
+        if (options.dryRun) {
+            return;
+        }
+        /** Global ambiguity is resolved before local retention and transaction preparation. */
+        const globalNames = await finishChoices(plan.globals, interactive, options.global);
+        /** Local defaults are used by scripts and offered as terminal prompt defaults. */
+        const retained = await finishChoices(plan.locals, interactive,
+            options.keep.map(value => value.slice(group.length + 1)), true);
+        /** Complete cleanup operation is independently replayable by the helper. */
+        const operation: Operation = { kind: 'target-clean', group, globalNames,
+            keep: retained.map(value => `${group}=${value}`) };
+        cleanSummary(snapshot.text, operation);
+        await mutate(operation, snapshot);
+    });
 for (const action of ['add', 'set'] as const) {
     command(target,
         `${action} [group] [target] [value]`,
@@ -589,6 +711,52 @@ const global = command(program,
     'global',
     'Manage shared targets selected directly with @name.',
     'global add local 127.0.0.1');
+command(global,
+    'clean',
+    'Keep one global per duplicate IP and redirect its direct consumers; preserve local targets.',
+    'global clean --keep local')
+    .option('--keep <name>', 'Retain this global for its duplicate IP; repeat for different IPs', list, [])
+    .option('--dry-run', 'Preview without prompts, writes, or elevation')
+    .action(async (options: CleanOptions) => {
+        /** Snapshot remains unchanged until every retention choice has completed. */
+        const snapshot = await source();
+        /** Current managed state and scoped conflicts. */
+        const parsed = parse(snapshot.text);
+        if (parsed.documentFatal || parsed.conflicts.some(conflict => !conflict.group)) {
+            throw new HostmanError('Conflicted scope. Run hostman repair before mutation.');
+        }
+        if (!parsed.outer) {
+            throw new HostmanError('No hostman section. Run hostman init or migrate first.');
+        }
+        /** Only duplicate global definitions are eligible for retention choices. */
+        const choices = globalCleanPlan(parsed.document, options.keep);
+        if (choices.every(choice => choice.selected)) {
+            transform(snapshot.text, { kind: 'global-clean', keep: choices.map(choice => choice.selected!) });
+        }
+        console.log(`Source: ${snapshot.path}`);
+        console.log('Clean globals:');
+        console.log(choicePreview(choices, 'Keep global').join('\n') || '  No duplicate globals.');
+        for (const choice of choices) {
+            /** All consumers potentially redirected by this duplicate IP choice. */
+            const references = parsed.document.groups.filter(group =>
+                choice.names.some(name => group.activeTarget === `@${name}`));
+            console.log(`  References: ${references.map(group => `${group.name}=${group.activeTarget}`)
+                .join(', ') || 'none'}`);
+            for (const conflict of parsed.conflicts.filter(conflict =>
+                references.some(group => group.name === conflict.group))) {
+                console.log(`  CONFLICT ${conflict.group}: ${conflict.message}`);
+            }
+        }
+        if (options.dryRun) {
+            return;
+        }
+        /** Scripts must supply every duplicate global retention choice explicitly. */
+        const keep = await finishChoices(choices, interactive, options.keep);
+        /** Fully resolved global cleanup has no interaction in the privileged helper. */
+        const operation: Operation = { kind: 'global-clean', keep };
+        cleanSummary(snapshot.text, operation);
+        await mutate(operation, snapshot);
+    });
 for (const action of ['add', 'set'] as const) {
     command(global,
         `${action} [target] [ip]`,
@@ -699,10 +867,12 @@ program.action(async () => {
             ['Set target', 'target set'],
             ['Rename target', 'target rename'],
             ['Remove target', 'target remove'],
+            ['Clean group targets', 'target clean'],
             ['Add global target', 'global add'],
             ['Set global target', 'global set'],
             ['Rename global target', 'global rename'],
             ['Remove global target', 'global remove'],
+            ['Clean duplicate globals', 'global clean'],
             ['Repair external changes', 'repair'],
             ['Exit', 'exit']
         ].map(([name, value]) => ({
