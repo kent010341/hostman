@@ -20,8 +20,10 @@
 | `src/cli/index.ts` | Command tree, global options, prompts, menu, previews, and orchestration |
 | `src/cli/hints.ts` | Pure contextual suggestions, related help, failure guidance, and shell quoting |
 | `src/cli/migration.ts` | Pure multi-line migration proposal and final-summary formatting |
+| `src/cli/cleaning.ts` | Terminal destination choices and pending cleanup/migration preview lines |
 | `src/domain/model.ts` | Targets, groups, documents, validation, IP comparison, and semantic digests |
 | `src/domain/operations.ts` | Operation union, pure domain mutations, and validated text transformation |
+| `src/domain/cleaning.ts` | Pure IP buckets, source-derived cleanup proposals and choice validation |
 | `src/hosts/document.ts` | Marker parsing, source spans, serialization, migration candidates and removal |
 | `src/fs/storage.ts` | Source selection, decoding, locking, replacement, elevation, and helper protocol |
 | `src/fs/helper.ts` | Non-interactive privileged commit entry point |
@@ -36,6 +38,7 @@
 | `test/storage.test.mjs`, `test/acl.ps1` | Transactions, concurrency, metadata, encoding, and elevation |
 | `test/rename.test.mjs` | Target renaming, active selections, global references, CLI and helper replay |
 | `test/selection.test.mjs` | Existing-item menus, scope isolation, deletion restrictions and cancellation |
+| `test/cleaning.test.mjs` | Cleanup, global migration reuse, pending previews, TTY cancellation and helper replay |
 
 | Task | Inspect first |
 | --- | --- |
@@ -43,6 +46,7 @@
 | Change next-step suggestions | Hints module, CLI integration, hints/CLI tests |
 | Change group or target behavior | Domain model and operations, parser representation, domain tests |
 | Change markers or migration | Hosts document module, transform, domain fixtures/tests |
+| Change cleanup or global reuse | Domain cleaning/operations, candidates, CLI choices and cleaning tests |
 | Change writes or permissions | Storage, helper entries, PowerShell implementation, storage tests |
 | Change build or installation | Package/TS config, helper-copy and package-smoke scripts, developer docs |
 
@@ -56,7 +60,7 @@ Keep domain transformations independent of prompts and filesystem APIs. Keep sug
 ```text
 hostman
 hostman init
-hostman migrate [--group <group> ... | --all] [--dry-run]
+hostman migrate [--group <group> ... | --all] [--global <name> ...] [--dry-run]
 hostman show [active | all | <group>]
 hostman add group [group] [--target <name=value> ...] [--active <target>] [--host <hostname> ...] [--disabled]
 hostman add host [group] [hostname]
@@ -69,10 +73,12 @@ hostman target add [group] [target] [value]
 hostman target set [group] [target] [value]
 hostman target rename [group] [target] [new-name]
 hostman target remove [group] [target]
+hostman target clean [group] [--global <name> ...] [--keep <group=target> ...] [--dry-run]
 hostman global add [target] [ip]
 hostman global set [target] [ip]
 hostman global rename [target] [new-name]
 hostman global remove [target]
+hostman global clean [--keep <name> ...] [--dry-run]
 hostman repair [group] [--strategy restore | keep]
 ```
 
@@ -109,6 +115,22 @@ hostman repair [group] [--strategy restore | keep]
   clean state are byte-stable; affected conflicts block renames and valid manual hostname additions survive.
 - Next-step hints appear only when stdin and stdout are terminals and hints are enabled. `--no-hints`
   suppresses them, including from the menu. Scripts omit hints automatically.
+- `target clean` cleans exactly one group; it has no `--all`. Omitted groups use terminal selection, while
+  scripts and dry runs require a group. Matching local IPs reuse globals and remove their local definitions;
+  active literals redirect to the chosen global. Existing direct global selections remain unchanged.
+  Multiple global matches require a terminal choice or repeatable `--global <name>` flags. Remaining local
+  duplicate IPs retain one target: terminal selection defaults to active or first source definition, and scripts
+  use that default. Repeatable `--keep <group=target>` overrides retention and redirects active names if needed.
+- `global clean` deduplicates the global namespace only. Terminals select one retained global per duplicate IP;
+  scripts must provide repeatable `--keep <name>` covering every duplicate IP. Removed names' direct active
+  consumers, including disabled groups, redirect to the retained global. Group-owned targets remain intact.
+  Nonduplicate globals are preserved. Both clean commands appear in the guided menu, preserve enabled state,
+  hostnames and semantic destination IPs, and finish selections before one transaction. Group cleanup makes
+  future global IP changes apply to newly redirected consumers. Unknown, unrelated or contradictory choices
+  fail before writes. Dry runs never prompt/write/elevate and show pending choices; global previews list consumers.
+  Complete previews validate their affected scope. Summaries show removals, retained names and active redirects.
+  Structural/affected conflicts block cleanup; unrelated group conflicts remain isolated. Clean no-ops and repeat
+  runs without obsolete explicit flags preserve bytes, and valid manual additions survive changed blocks.
 - Interactive `remove host` selects an omitted hostname from its group's full hostname list, including root
   and disabled-group hostnames. `target set/remove` and `global set/remove` select omitted existing names
   from their own scope, displaying names and IPs in definition order. Group operations select an omitted
@@ -144,22 +166,28 @@ hostman repair [group] [--strategy restore | keep]
   stay separate from effective rules and unmanaged collision validation.
 - Without selection flags, migration previews, selects, and confirms. Repeatable `--group` and `--all`
   are mutually exclusive. Dry runs do not prompt, write, or elevate. No eligible imports means no changes.
-- New groups import one literal target per semantic IP and the hostname union, deduplicating repeated aliases.
+- New groups reuse matching globals or import one literal target per unmatched semantic IP and the hostname
+  union, deduplicating repeated aliases. Unique global matches need no prompt; multiple matches require terminal
+  selection or repeatable `--global <name>`. Each new IP shares a choice across selected groups. Scripts reject
+  unresolved ambiguity; dry runs show matching names and pending selections without inventing active state.
   One effective IP enables the group and selects its target; multiple effective IPs skip the whole group.
-  Commented-only groups start disabled with the first target retained for a later enable. Previews and
-  summaries report `active: none (disabled)` and the stored enable selection; `show` retains its existing
+  Commented-only groups start disabled with the first destination, possibly global, retained for a later enable.
+  Previews and summaries report `active: none (disabled)` and the stored enable selection; `show` retains its existing
   disabled flag and stored active target display. Names default to available `imported`, `imported-2`, etc.
-- Every interactive import, including `--all` and `--group`, prompts for each new target name with a default.
+- Every interactive import, including `--all` and `--group`, prompts for each new literal target name with a default.
   Scripts and dry runs use deterministic defaults. Existing names and accepted names remain reserved within
   the group. Prompting finishes before summary, confirmation when required, and any write or elevation.
 - Migration previews use separate multi-line READY/SKIP blocks per group. READY blocks and final summaries
   list targets, hosts and active state separately. SKIP blocks show the reason, source rules sorted by original
   line number with same-line aliases combined, and an action; they omit hypothetical targets and active state.
+  Explicit global flags resolve the displayed proposal; unresolved global ambiguity is marked pending.
   Candidate reasons and source occurrences remain separate; domain/helper errors retain source diagnostics.
 - Compatible existing groups merge hosts and missing targets without changing enabled state, active target
   or existing definitions. Matching IPs reuse the active selection first, including a direct global, then the first
-  matching existing target. Enabled groups require matching effective input; disabled groups only accept
-  commented input. Same-group outside duplicates can be absorbed, resolving only their unmanaged hostname
+  matching existing target. Missing destinations reuse globals before creating literals. Migration does not
+  clean or remove existing target definitions; use single-group `target clean` separately.
+  Enabled groups require matching effective input; disabled groups only accept commented input.
+  Same-group outside duplicates can be absorbed, resolving only their unmanaged hostname
   conflicts. Other managed conflicts and cross-group ownership remain blocking. Skip details identify source
   lines, hosts, outside IPs and managed active IP or disabled state; repair does not remove outside rules.
 - Selected aliases are removed from unmanaged lines and inserted into management in one transaction.
@@ -187,6 +215,8 @@ hostman repair [group] [--strategy restore | keep]
   must validate, lock, reread, replay, and verify before committing; never resolve the source under a new account.
   Migration operations may include target naming overrides by group and semantic IP; replay recomputes
   candidates and validates names without prompting or trusting caller-supplied source state.
+  Migration and group cleanup may include global-name choices; cleanup may include retention names. Replay
+  reconstructs relevant semantic IP buckets, validates name arrays and requires resolved global choices.
 - Serialize writers with a sibling `.hostman.lock`. Prepare and flush a same-directory temporary file,
   recheck the source immediately before replacement, and preserve Unix mode/ownership. Windows uses .NET
   `File.Replace` with metadata errors enforced to preserve destination attributes/ACLs. Never truncate live hosts.
@@ -230,6 +260,9 @@ hostman repair [group] [--strategy restore | keep]
   or sudo authentication.
   Existing-item selection tests also cover scope isolation, disabled deletion choices, empty/protected lists
   and byte preservation throughout prompts and cancellation.
+  Cleanup tests cover active/inactive and enabled/disabled destinations, global redirects without local removal,
+  IPv6 equivalence, explicit/default retention, invalid choices, isolated conflicts, manual additions, dry-run
+  ambiguity, script failures, real Inquirer cancellation, migration global reuse and compiled helper replay.
 - Direct global regression coverage includes empty group targets, same-named local/global selections,
   disabled deletion protection, affected conflicts, semantic migration reuse, repair restrictions,
   simulated TTY selection/cancellation and compiled helper replay.

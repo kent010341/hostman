@@ -18,6 +18,7 @@ No eligible rules means no changes.
 hostman migrate --dry-run
 hostman migrate --group foo.test --group bar.test
 hostman migrate --all
+hostman migrate --all --global local
 ```
 
 `--group` is repeatable and mutually exclusive with `--all`. Dry runs never prompt, write, or request elevation.
@@ -28,8 +29,8 @@ v1; `example.co.uk` groups under `co.uk`.
 
 | Candidate | Result |
 | --- | --- |
-| New group, one effective IP | Import every distinct IP target; enable and select the effective IP |
-| New group, only commented rules | Import every distinct IP target; keep the group disabled |
+| New group, one effective IP | Reuse globals or create literal targets; enable and select the effective IP |
+| New group, only commented rules | Reuse globals or create literal targets; keep the group disabled |
 | Existing enabled group, matching effective IP or commented-only input | Merge hosts and missing targets; retain state |
 | Existing disabled group, commented-only input | Merge hosts and missing targets; remain disabled |
 | Multiple effective IPs, mismatched active IP, or effective input for a disabled group | Skip the whole group |
@@ -43,19 +44,25 @@ Commented rules do not count as effective mappings or unmanaged hostname collisi
 
 Each candidate contains the hostname union and one target per semantic IP, even when each IP originally had
 different aliases. All enabled aliases use the selected active IP; migration does not preserve per-host IPs.
-New target defaults follow IP first occurrence: `imported`, `imported-2`, and so on, avoiding occupied names.
+New literal target defaults follow IP first occurrence: `imported`, `imported-2`, and so on, avoiding occupied names.
 In every interactive import, including `--all` and `--group`, each newly created target has a naming prompt.
 Press Enter to accept the default. Scripts and dry runs use default names without prompting. Names must be
 unique in the group and start with a letter or number, followed by letters, numbers, underscores or hyphens.
 Renaming an earlier target can change the next available default. Final summaries show the accepted names.
 
-Disabled new groups retain the first imported target as their selection for a later `enable`. Migration previews
+Disabled new groups retain the first imported destination, including a global, for a later `enable`. Migration previews
 and summaries show `active: none (disabled)` and `enable selects: <target>`; `show` reports the stored active
 selection and its IP together with the disabled flag. There are no effective mappings while disabled.
 
 Existing groups retain enabled state, active selection, target names and IPs. Matching IPs reuse the active
-selection first, including a direct global selection, then the first matching group target; new IPs become
-literal group targets. Matching uses semantic IP comparison, including equivalent IPv6 spellings.
+selection first, including a direct global selection, then the first matching group target. New destinations
+reuse matching globals before creating literal group targets. Matching uses semantic IP comparison, including
+equivalent IPv6 spellings. Migration does not clean or remove existing group targets.
+One matching global is selected automatically. Multiple matching globals require an interactive selection or
+repeatable `--global <name>` flags, one per ambiguous IP. The same new IP shares a choice across selected groups.
+Scripts fail before writing if a choice is missing. Dry runs list matching names and mark unresolved choices
+as pending rather than inventing an active selection. Flags naming unrelated globals or conflicting choices
+for the same semantic IP are rejected. Reused globals do not prompt for a new literal target name.
 Compatible outside duplicates owned by the same group can be absorbed without bypassing other validation.
 Skip diagnostics identify source line numbers, aliases, outside IPs and the managed active IP or disabled state.
 Edit conflicting outside rules before retrying; `repair` is for damaged managed blocks, not outside rules.
@@ -68,6 +75,46 @@ will take place for that group. Formatting is the same in interactive terminals,
 
 Selected hostname tokens move into management in one transaction. Unselected aliases retain their IP, spacing,
 comment prefix and inline comments. If every alias on a line is imported, its inline comment remains separately.
+
+## Cleaning destinations
+
+```sh
+hostman target clean example.com --dry-run
+hostman target clean example.com --global local --keep example.com=lab
+hostman global clean --dry-run
+hostman global clean --keep local --keep ipv6
+```
+
+`target clean [group]` cleans one group's definitions. There is no `--all` option. Omit the group in an interactive
+terminal to choose it; scripts and dry runs require an explicit group. It removes all literal targets whose IP
+matches a global. If the active literal is removed, its selection becomes `@global-name`. An existing direct
+global selection is preserved, including when other globals have the same IP; matching local definitions are
+removed without choosing a different global. A unique global match needs no prompt. Otherwise use repeatable
+`--global <name>` flags or select a name interactively; scripts reject unresolved global ambiguity.
+
+For each remaining duplicated local IP, cleanup keeps one local definition. Repeatable `--keep <group=target>`
+flags select the retained names. Without an override, terminals ask which name to keep, defaulting to the active
+target or the first source definition; scripts use that default without prompting. If a different local name is
+retained, the active selection redirects to it without changing its destination IP. Literal target names are
+serialized in their existing canonical name order, so the first-source default refers to the current file.
+
+`global clean` considers duplicate semantic IPs only within the global namespace. Each duplicate IP requires
+one retained name, selected interactively or supplied through repeatable `--keep <name>` flags. Scripts must
+explicitly cover every duplicate IP. Other names for that IP are removed, and every direct active selection of
+a removed name is redirected to the retained global, including disabled groups. Group-owned targets are never
+removed by global cleanup. Nonduplicated globals retain their definitions and order.
+
+Both commands preserve enabled state, hostnames and semantic destination IPs. Removing local definitions in
+favor of a global means future global IP updates now apply to that group. Unknown, unrelated, malformed or
+contradictory retention choices fail before writing. All prompts finish before one digest-checked transaction;
+cancelling any prompt preserves the source bytes. Structural conflicts block cleanup; group conflicts block
+operations that rewrite those groups. Unrelated group conflicts remain isolated.
+
+Dry runs never prompt, write or elevate. They show destination candidates, known selections and pending choices;
+global previews also list direct consumer groups and their current selections. Complete previews validate their
+affected scope. Execution summaries list removed and retained definitions and active redirects. Clean no-ops and
+repeated cleanup without explicit obsolete flags make no byte changes. Valid manual hostname additions survive
+when a changed group is serialized. No matching or duplicate destinations means no changes.
 
 ## Groups and targets
 

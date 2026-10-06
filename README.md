@@ -60,8 +60,10 @@ hostman show all
 
 You do not need to run `init` first. A hostname such as `api.foo.test` becomes part of the `foo.test` group.
 Migration imports effective rules and commented rules such as `#127.0.0.1 api.foo.test`.
-Each distinct IP becomes a target, with default names `imported`, `imported-2`, and so on. Interactive imports
-let you name each new target; press Enter to accept its default. Hostnames are combined across targets.
+Each distinct IP reuses a matching global or becomes a literal target, with default names `imported`,
+`imported-2`, and so on. Interactive imports let you name each new literal target; press Enter to accept its
+default. Multiple matching globals require a terminal choice or `--global <name>` in scripts. Existing groups
+retain their active selection and target definitions. Hostnames are combined across destinations.
 One effective IP enables the new group and selects that target. Commented-only groups start disabled.
 
 Run `hostman migrate` again whenever you add more rules manually. Multiple effective IPs or conflicts with
@@ -177,6 +179,30 @@ hostman add group example.com --active '@local' --host '@' --host api
 Group targets created with `target add/set` or `--target name=IP` accept literal IPs only.
 Omit the existing target name from `target set` or `global set` in an interactive terminal to select its name
 and IP from a list before entering the replacement IP. New target names still use text input.
+
+### Clean duplicate destinations
+
+Preview and clean one group's targets, or deduplicate globals separately:
+
+```sh
+hostman target clean example.com --dry-run
+hostman target clean example.com
+hostman global clean --dry-run
+hostman global clean
+```
+
+Group cleanup removes literal targets whose IP matches a global and switches an active literal to that global.
+It also keeps one local target per remaining duplicate IP. The terminal asks which name to retain. Scripts retain
+the active local target, or the first definition when none is active; use `--keep example.com=lab` to override.
+Multiple matching globals require a choice; scripts supply `--global local`. Group cleanup has no `--all` option.
+The enabled state, hostnames and selected IP stay the same. Choosing a global makes future global IP changes
+apply to the group.
+
+Global cleanup keeps one global per duplicate IP and redirects direct selections, including disabled groups.
+It leaves all group-owned targets intact. Scripts must specify one `--keep <name>` per duplicate IP, for example
+`hostman global clean --keep local`. Both clean commands support repeated selection flags and no-write dry runs.
+Dry runs show unresolved choices without prompting. For migration, use `hostman migrate --all --global local`
+when multiple globals match an imported destination; migration leaves existing target definitions intact.
 
 ### Remove a target or project
 
