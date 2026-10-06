@@ -125,14 +125,17 @@ async function chooseGroup(value?: string): Promise<string> {
     });
 }
 /**
- * Select an existing rename subject when omitted in an interactive terminal.
+ * Select an existing target when omitted in an interactive terminal.
  * @param value Explicit target name, passed through for domain validation.
  * @param group Owning group, or undefined to select a shared global target.
+ * @param action Operation determining the prompt and deletion restrictions.
  * @returns Existing name chosen from the source, or the explicit script argument.
  */
-async function chooseRenameTarget(value: string | undefined, group?: string): Promise<string> {
+async function chooseTarget(
+    value: string | undefined, group: string | undefined, action: 'set' | 'rename' | 'remove'
+): Promise<string> {
     /** Prompt label shared by selection and missing script argument errors. */
-    const message = group === undefined ? 'Global target to rename' : 'Target to rename';
+    const message = `${group === undefined ? 'Global target' : 'Target'} to ${action}`;
     if (value !== undefined || !interactive) {
         return text(value, message);
     }
@@ -150,7 +153,45 @@ async function chooseRenameTarget(value: string | undefined, group?: string): Pr
             ? 'No global targets. Run hostman global add first.'
             : `No targets in ${group}. Run hostman target add first.`);
     }
-    return select({ message, choices: targets.map(t => ({ name: t.name, value: t.name })) });
+    /** Deletion restrictions remain visible while preventing invalid selections. */
+    const choices = targets.map(t => {
+        /** All direct references protect a global, including disabled groups. */
+        const references = document.groups.filter(g => g.activeTarget === `@${t.name}`);
+        /** Explanation shown beside targets that cannot be removed. */
+        const disabled = action !== 'remove' ? false : group === undefined
+            ? references.length ? `Selected by ${references.map(g => g.name).join(', ')}` : false
+            : owner!.activeTarget === t.name ? 'Active target; switch targets first' : false;
+        return { name: `${t.name} (${t.ip})`, value: t.name, disabled };
+    });
+    if (choices.every(choice => choice.disabled)) {
+        throw new HostmanError(group === undefined
+            ? 'No removable global targets. Switch every referencing group to another target first.'
+            : `No removable targets in ${group}. Switch to another group or global target first.`);
+    }
+    return select({ message, choices });
+}
+/**
+ * Select an owned hostname for removal without offering names from other groups.
+ * @param value Explicit hostname or shorthand, passed through for domain validation.
+ * @param group Group whose current hostname definitions supply the choices.
+ * @returns Explicit input or the selected full hostname.
+ */
+async function chooseHostname(value: string | undefined, group: string): Promise<string> {
+    if (value !== undefined || !interactive) {
+        return text(value, 'Hostname or subdomain');
+    }
+    /** Current owner supplies root and subdomain entries even when disabled. */
+    const owner = parse((await source()).text).document.groups.find(g => g.name === group);
+    if (!owner) {
+        throw new HostmanError(`Unknown group ${group}.`);
+    }
+    if (!owner.hosts.length) {
+        throw new HostmanError(`No hostnames in ${group}. Run hostman add host first.`);
+    }
+    return select({
+        message: 'Hostname to remove',
+        choices: owner.hosts.map(host => ({ name: host, value: host }))
+    });
 }
 /**
  * Obtain a literal IP from arguments or a terminal prompt.
@@ -443,12 +484,16 @@ for (const [parent, kind] of [[add, 'add-host'], [remove, 'remove-host']] as con
         'host [group] [hostname]',
         `${kind === 'add-host' ? 'Add' : 'Remove'} a hostname, short subdomain, or @.`,
         `${kind === 'add-host' ? 'add' : 'remove'} host foo.test api`)
-        .action(async (name: string | undefined, host: string | undefined) => mutate({
-            kind,
-            group: await chooseGroup(name),
-            host: await text(host,
-                'Hostname or subdomain')
-        }));
+        .action(async (name: string | undefined, host: string | undefined) => {
+            /** Resolve ownership before selecting an existing hostname. */
+            const group = await chooseGroup(name);
+            await mutate({
+                kind,
+                group,
+                host: kind === 'remove-host'
+                    ? await chooseHostname(host, group) : await text(host, 'Hostname or subdomain')
+            });
+        });
 }
 for (const kind of ['enable', 'disable'] as const) {
     command(program,
@@ -498,11 +543,19 @@ for (const action of ['add', 'set'] as const) {
         `${action} [group] [target] [value]`,
         `${action === 'add' ? 'Add' : 'Set'} a group target using a literal IP address.`,
         `target ${action} foo.test prod 10.0.0.1`)
-        .action(async (name: string | undefined, targetName: string | undefined, value: string | undefined) => mutate({
-            kind: `target-${action}`,
-            group: await chooseGroup(name),
-            target: { name: await text(targetName, 'Target name'), ip: await address(value) }
-        }));
+        .action(async (name: string | undefined, targetName: string | undefined, value: string | undefined) => {
+            /** Group scope must be resolved before offering existing targets. */
+            const group = await chooseGroup(name);
+            await mutate({
+                kind: `target-${action}`,
+                group,
+                target: {
+                    name: action === 'set'
+                        ? await chooseTarget(targetName, group, action) : await text(targetName, 'Target name'),
+                    ip: await address(value)
+                }
+            });
+        });
 }
 command(target,
     'rename [group] [target] [new-name]',
@@ -514,7 +567,7 @@ command(target,
         await mutate({
             kind: 'target-rename',
             group,
-            target: await chooseRenameTarget(targetName, group),
+            target: await chooseTarget(targetName, group, 'rename'),
             newName: await text(newName, 'New target name')
         });
     });
@@ -522,12 +575,15 @@ command(target,
     'remove [group] [target]',
     'Remove an inactive group target.',
     'target remove foo.test lab')
-    .action(async (name: string | undefined, targetName: string | undefined) => mutate({
-        kind: 'target-remove',
-        group: await chooseGroup(name),
-        target: await text(targetName,
-            'Target name')
-    }));
+    .action(async (name: string | undefined, targetName: string | undefined) => {
+        /** Owner determines the local active-target deletion restriction. */
+        const group = await chooseGroup(name);
+        await mutate({
+            kind: 'target-remove',
+            group,
+            target: await chooseTarget(targetName, group, 'remove')
+        });
+    });
 /** Command namespace for shared destinations selected directly by groups. */
 const global = command(program,
     'global',
@@ -540,8 +596,8 @@ for (const action of ['add', 'set'] as const) {
         `global ${action} local 127.0.0.1`)
         .action(async (name: string | undefined, ip: string | undefined) => mutate({
             kind: `global-${action}`,
-            name: await text(name,
-                'Global target name'),
+            name: action === 'set'
+                ? await chooseTarget(name, undefined, action) : await text(name, 'Global target name'),
             ip: await address(ip)
         }));
 }
@@ -551,7 +607,7 @@ command(global,
     'global rename local shared')
     .action(async (name: string | undefined, newName: string | undefined) => mutate({
         kind: 'global-rename',
-        name: await chooseRenameTarget(name),
+        name: await chooseTarget(name, undefined, 'rename'),
         newName: await text(newName, 'New global target name')
     }));
 command(global,
@@ -559,8 +615,7 @@ command(global,
     'Remove a global target only when no group selects it.',
     'global remove local').action(async (name: string | undefined) => mutate({
     kind: 'global-remove',
-    name: await text(name,
-        'Global target name')
+    name: await chooseTarget(name, undefined, 'remove')
 }));
 command(program,
     'repair [group]',

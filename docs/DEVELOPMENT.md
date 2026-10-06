@@ -46,6 +46,10 @@ before claiming cross-platform validation.
 disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive target selection and
 selection/naming cancellation, and compiled helper replay.
 
+`test/selection.test.mjs` drives actual Inquirer menus through simulated TTY pipes for hostname removal and
+group/global target updates and removal. It covers scope isolation, disabled deletion choices, disabled-group
+references, empty/protected lists, explicit and script arguments, and cancellation before any source write.
+
 On Windows, `npm run smoke:elevation` protects a disposable directory and requests actual UAC elevation.
 Accept the dialog to verify the privileged helper. The script restores permissions and removes the fixture.
 Run it from an unelevated terminal. Actual Unix `sudo` authentication requires a separate manual check.

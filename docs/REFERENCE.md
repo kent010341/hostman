@@ -82,6 +82,16 @@ Changing a global IP updates enabled groups selecting it. Disabled groups retain
 latest IP when enabled. A global selected by any group, including a disabled group, cannot be removed.
 Active group targets cannot be removed; switch to another group or global target first.
 
+Interactive `remove host` selects an omitted hostname from the selected group's full hostname list, including
+the root and disabled-group hostnames. Interactive `target set/remove` and `global set/remove` select omitted
+existing target names from their own scope, displaying names and IPs in definition order. Group operations
+select an omitted group first. Explicit arguments bypass selection and retain domain validation; scripts
+must supply complete arguments. Creation names and replacement names remain text inputs.
+Removal choices disable active group targets and globals selected by any group, including disabled groups,
+and show the reason or referencing group names. Empty lists and entirely protected lists report an actionable
+error without opening a selection prompt. Cancellation leaves the source unchanged; all prompts finish before
+the normal validated transaction begins.
+
 `target rename [group] [target] [new-name]` renames a literal target within its group.
 It preserves the destination, enabled state and hostnames, updating the stored active selection
 if it names that target. `global rename [target] [new-name]` renames a shared definition and updates every
