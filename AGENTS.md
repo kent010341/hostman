@@ -92,6 +92,12 @@ hostman repair [group] [--strategy restore | keep]
 - Other mutations require initialization, but `migrate` can create the section during an actual import.
 - Creating a group defaults its active target to the first initial target. `--active @global-name` directly
   selects a global; without `--target`, it creates no group targets and skips the initial target prompt.
+  In a terminal, omitting both `--target` and `--active` offers globals first in definition order with their IPs;
+  the first global is the default and the final option enters a new group target. Selecting a global creates no
+  local definitions and skips name/IP prompts. With no globals, only manual entry is offered. Manual entry
+  retains the `local` name default and IP selection/input flow. Explicit destination flags bypass this menu;
+  scripts still require explicit destinations. All creation prompts finish before writing, and destination
+  selection and commit use the same source snapshot so intervening edits fail the transaction digest check.
   Without `--host`, it includes the group root. Explicit `--host` options are the complete initial list;
   `@` means root and `api` expands
   to `api.<group>`. Empty groups remain representable after removing their last hostname.
@@ -263,6 +269,8 @@ hostman repair [group] [--strategy restore | keep]
   Cleanup tests cover active/inactive and enabled/disabled destinations, global redirects without local removal,
   IPv6 equivalence, explicit/default retention, invalid choices, isolated conflicts, manual additions, dry-run
   ambiguity, script failures, real Inquirer cancellation, migration global reuse and compiled helper replay.
+  Group creation TTY tests cover global-first initial selection, manual entry last, no-global fallback, explicit
+  destination bypass, disabled/explicit-host creation and byte preservation during prompts and cancellation.
 - Direct global regression coverage includes empty group targets, same-named local/global selections,
   disabled deletion protection, affected conflicts, semantic migration reuse, repair restrictions,
   simulated TTY selection/cancellation and compiled helper replay.

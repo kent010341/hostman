@@ -462,8 +462,8 @@ const add = command(program,
     'add host foo.test api');
 command(add,
     'group [group]',
-    'Create a group with explicit initial targets.',
-    'add group foo.test --target local=127.0.0.1')
+    'Create a group with a shared global or literal initial destination.',
+    'add group example.com --target local=127.0.0.1 --host api')
     .option('--target <name=value>',
         'Initial target IP; repeat to add targets',
         list,
@@ -477,11 +477,30 @@ command(add,
     .option('--disabled',
         'Create a disabled group (default: enabled)')
     .action(async (name: string | undefined, options: GroupOptions) => {
+        /** Normalized root owning the initial hostnames and destinations. */
         const groupName = (await text(name,
             'Two-label group root')).toLowerCase();
         /** Explicit destinations; a direct global selection needs no group targets. */
         let specs: string[] = options.target;
-        if (!specs.length && !options.active?.startsWith('@')) {
+        /** Explicit selection or a global chosen from the initial destination menu. */
+        let activeTarget = options.active;
+        /** Destination choices and eventual commit share the same source snapshot. */
+        let snapshot: Awaited<ReturnType<typeof source>> | undefined;
+        if (interactive && !specs.length && activeTarget === undefined) {
+            snapshot = await source();
+            /** Existing shared destinations offered in their source definition order. */
+            const globals = parse(snapshot.text).document.globals;
+            activeTarget = await select({
+                message: 'Initial target',
+                choices: [
+                    ...globals.map(target => ({
+                        name: `@${target.name} (global, ${target.ip})`, value: `@${target.name}`
+                    })),
+                    { name: 'Enter a new group target', value: '' }
+                ]
+            }) || undefined;
+        }
+        if (!specs.length && !activeTarget?.startsWith('@')) {
             specs = [
                 `${await text(undefined,
                     'Initial target name',
@@ -497,13 +516,15 @@ command(add,
             }
             return { name: spec.slice(0, index), ip: spec.slice(index + 1) };
         });
+        /** Host shorthand expansion uses the same domain rules as later hostname additions. */
         const { expandHost } = await import('#hostman/domain/operations');
+        /** Explicit hosts replace the default group root. */
         const hosts = options.host.length ? options.host : ['@'];
         /** New group retaining either a local destination or direct global selection. */
         const group: Group = {
             name: groupName,
             targets,
-            activeTarget: options.active ?? targets[0].name,
+            activeTarget: activeTarget ?? targets[0].name,
             enabled: !options.disabled,
             hosts: hosts.map((h: string) => expandHost(groupName,
                 h))
@@ -511,7 +532,7 @@ command(add,
         await mutate({
             kind: 'add-group',
             group
-        });
+        }, snapshot);
     });
 const remove = command(program,
     'remove',

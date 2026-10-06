@@ -158,6 +158,12 @@ Explicit `--host` options define the complete initial hostname list; use `@` to 
 when no `--target` options are supplied, it creates a group with no group-owned targets and skips the initial
 target prompt. An empty target list is valid only when the active selection resolves to an existing global.
 For example: `hostman add group example.com --active '@local' --host '@' --host api`.
+Without `--target` or `--active`, interactive creation lists globals in source definition order with their IPs,
+defaulting to the first global. The final choice, `Enter a new group target`, opens the literal name prompt
+(default `local`) followed by IP selection/input. With no globals, manual entry is the only choice. Selecting
+a global stores `active=@name`, creates no local definitions, and skips name/IP prompts. Explicit destination
+flags bypass this initial menu; scripts must provide destinations. Cancellation leaves the source unchanged.
+The destination menu and commit share a source snapshot; intervening edits invalidate its transaction digest.
 `target add/set` and `--target name=value` reject global references; supply a literal IP instead.
 
 If an older version created an empty group, add its root with `hostman add host <group> @`.

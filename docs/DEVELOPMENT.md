@@ -42,6 +42,11 @@ helper replay. Windows tests perform real file replacement and ACL checks. Unix 
 symlinks when run on Unix. No CI workflow is tracked in this checkout; run the checks on each target platform
 before claiming cross-platform validation.
 
+`test/migration-cli.test.mjs` also covers global-first initial group destinations, the final manual-entry option,
+no-global fallback, explicit destination bypass, disabled groups, explicit hosts and cancellation. Simulated
+TTY tests verify source bytes before supplying creation responses. Initial destination selection uses the same
+source snapshot as the eventual transaction; all name/IP prompts remain in the unelevated CLI process.
+
 `test/rename.test.mjs` covers group and global target renaming, literal target and direct active selection preservation,
 disabled groups, naming errors, clean no-ops, manual edits, CLI transactions, interactive target selection and
 selection/naming cancellation, and compiled helper replay.

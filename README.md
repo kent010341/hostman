@@ -176,6 +176,11 @@ You can create a group using only a global destination:
 hostman add group example.com --active '@local' --host '@' --host api
 ```
 
+In a terminal, `hostman add group example.com --host '@'` offers existing globals first, displaying each IP.
+Press Enter to use the first global, or choose the final `Enter a new group target` option to enter a literal
+target name and IP. Selecting a global creates no group-owned targets. With no globals, the menu offers only
+manual entry. Explicit `--target` or `--active` options skip this menu; scripts must supply destination flags.
+
 Group targets created with `target add/set` or `--target name=IP` accept literal IPs only.
 Omit the existing target name from `target set` or `global set` in an interactive terminal to select its name
 and IP from a list before entering the replacement IP. New target names still use text input.
